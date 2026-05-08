@@ -1,0 +1,165 @@
+:root {
+  color: #1f2933;
+  background: #f7f8fa;
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid #d8dee8;
+  background: #ffffff;
+  padding: 20px 14px;
+}
+
+.brand {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 24px;
+}
+
+.brand span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.nav-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #344054;
+  cursor: pointer;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.nav-item.active {
+  background: #e8f1ff;
+  color: #175cd3;
+}
+
+.main-panel {
+  min-width: 0;
+  padding: 20px;
+}
+
+.workspace-path,
+.placeholder,
+.error-banner {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.workspace-path {
+  background: #ffffff;
+  color: #667085;
+  font-size: 13px;
+}
+
+.error-banner {
+  background: #fff1f0;
+  border-color: #ffccc7;
+  color: #b42318;
+}
+
+.creator-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(360px, 1.3fr) minmax(280px, 1fr);
+}
+
+.settings-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.panel h2 {
+  font-size: 18px;
+  margin: 0 0 14px;
+}
+
+.panel h3 {
+  font-size: 14px;
+  margin: 16px 0 8px;
+}
+
+textarea,
+input,
+select {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  display: block;
+  margin: 8px 0 14px;
+  padding: 10px;
+  width: 100%;
+}
+
+textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+
+button {
+  background: #175cd3;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  margin-right: 8px;
+  padding: 9px 12px;
+}
+
+button:disabled {
+  background: #98a2b3;
+  cursor: not-allowed;
+}
+
+.field-list {
+  display: grid;
+  gap: 8px;
+}
+
+.field-list div {
+  border-top: 1px solid #eef2f6;
+  padding-top: 8px;
+}
+
+.field-list dt {
+  color: #667085;
+  font-size: 12px;
+}
+
+.field-list dd {
+  margin: 3px 0 0;
+}
