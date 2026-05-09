@@ -2,11 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PromptWeave",
   "version": "0.1.0",
-  "identifier": "com.promptweave.app",
+  "identifier": "com.promptweave.desktop",
   "build": {
-    "beforeDevCommand": "pnpm vite --host 127.0.0.1",
+    "beforeDevCommand": "corepack pnpm vite --host 127.0.0.1",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "pnpm vite build",
+    "beforeBuildCommand": "corepack pnpm vite build",
     "frontendDist": "../dist"
   },
   "app": {
