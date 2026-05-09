@@ -1,3 +1,4 @@
+mod config;
 mod db;
 mod imports;
 mod providers;
@@ -43,6 +44,19 @@ fn search_prompt_templates(query: String, limit: usize) -> Result<Vec<db::Prompt
     db::search_prompt_templates(std::path::Path::new(&workspace.database_path), &query, limit)
 }
 
+#[tauri::command]
+fn get_app_config() -> Result<config::AppConfig, String> {
+    let root = workspace::default_workspace_root()?;
+    workspace::ensure_workspace(&root)?;
+    config::load_config(&root)
+}
+
+#[tauri::command]
+fn save_app_config(config: config::AppConfig) -> Result<config::AppConfig, String> {
+    let root = workspace::default_workspace_root()?;
+    config::save_config(&root, &config)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -51,7 +65,9 @@ fn main() {
             preview_import_url,
             import_prompt_library,
             list_prompt_templates,
-            search_prompt_templates
+            search_prompt_templates,
+            get_app_config,
+            save_app_config
         ])
         .run(tauri::generate_context!())
         .expect("failed to run PromptWeave");

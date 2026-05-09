@@ -97,6 +97,25 @@ select {
   grid-template-columns: repeat(2, minmax(260px, 1fr));
 }
 
+.settings-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.checkbox-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.checkbox-row input {
+  margin: 0;
+  width: auto;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d8dee8;
