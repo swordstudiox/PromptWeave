@@ -163,3 +163,47 @@ button:disabled {
 .field-list dd {
   margin: 3px 0 0;
 }
+
+.inline-error {
+  color: #b42318;
+}
+
+.inline-success {
+  color: #027a48;
+}
+
+.warning-list {
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  color: #93370d;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.warning-list p {
+  margin: 4px 0;
+}
+
+.import-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.template-row {
+  border-top: 1px solid #eef2f6;
+  display: grid;
+  gap: 5px;
+  padding-top: 10px;
+}
+
+.template-row span,
+.template-row small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.template-row p {
+  margin: 0;
+}

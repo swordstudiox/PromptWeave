@@ -1,5 +1,7 @@
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::path::Path;
+
+use crate::imports::PromptTemplateDraft;
 
 pub fn bootstrap(database_path: &Path) -> Result<(), String> {
     let connection = Connection::open(database_path)
@@ -54,4 +56,76 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
         .map_err(|err| format!("Failed to bootstrap database: {err}"))?;
 
     Ok(())
+}
+
+pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraft]) -> Result<usize, String> {
+    let mut connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let transaction = connection
+        .transaction()
+        .map_err(|err| format!("Failed to start import transaction: {err}"))?;
+    let mut inserted = 0usize;
+
+    {
+        let mut statement = transaction
+            .prepare(
+                r#"
+                INSERT OR IGNORE INTO prompt_templates (
+                  id,
+                  title,
+                  category,
+                  source_repo,
+                  source_url,
+                  source_license,
+                  author,
+                  model_hint,
+                  language,
+                  prompt_original,
+                  prompt_zh,
+                  prompt_en,
+                  negative_prompt,
+                  aspect_ratio,
+                  tags_json,
+                  preview_image_urls_json,
+                  imported_at,
+                  content_hash
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                "#,
+            )
+            .map_err(|err| format!("Failed to prepare import statement: {err}"))?;
+
+        for item in items {
+            let tags_json = serde_json::to_string(&item.tags).map_err(|err| format!("Failed to serialize tags: {err}"))?;
+            let preview_image_urls_json = serde_json::to_string(&item.preview_image_urls)
+                .map_err(|err| format!("Failed to serialize preview URLs: {err}"))?;
+            let changed = statement
+                .execute(params![
+                    &item.id,
+                    &item.title,
+                    &item.category,
+                    &item.source_repo,
+                    &item.source_url,
+                    &item.source_license,
+                    &item.author,
+                    &item.model_hint,
+                    &item.language,
+                    &item.prompt_original,
+                    &item.prompt_zh,
+                    &item.prompt_en,
+                    &item.negative_prompt,
+                    &item.aspect_ratio,
+                    &tags_json,
+                    &preview_image_urls_json,
+                    &item.imported_at,
+                    &item.content_hash,
+                ])
+                .map_err(|err| format!("Failed to insert prompt template '{}': {err}", item.title))?;
+            inserted += changed;
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|err| format!("Failed to commit import transaction: {err}"))?;
+    Ok(inserted)
 }
