@@ -27,13 +27,31 @@ fn import_prompt_library(url: String) -> Result<imports::ImportResult, String> {
     imports::import_prompt_library(&root, &url)
 }
 
+#[tauri::command]
+fn list_prompt_templates(limit: usize) -> Result<Vec<db::PromptTemplateRecord>, String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::list_prompt_templates(std::path::Path::new(&workspace.database_path), limit)
+}
+
+#[tauri::command]
+fn search_prompt_templates(query: String, limit: usize) -> Result<Vec<db::PromptTemplateRecord>, String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::search_prompt_templates(std::path::Path::new(&workspace.database_path), &query, limit)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             init_workspace,
             classify_import_url,
             preview_import_url,
-            import_prompt_library
+            import_prompt_library,
+            list_prompt_templates,
+            search_prompt_templates
         ])
         .run(tauri::generate_context!())
         .expect("failed to run PromptWeave");

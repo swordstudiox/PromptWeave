@@ -45,7 +45,7 @@ export default function App() {
       </aside>
       <section className="main-panel">
         {error ? <div className="error-banner">{error}</div> : null}
-        {workspace ? <div className="workspace-path">工作区：{workspace.data_dir}</div> : null}
+        {workspace ? <div className="workspace-path">工作区：{workspace.dataDir}</div> : null}
         {view === "creator" ? <CreatorWorkspace /> : null}
         {view === "templates" ? <TemplateLibrary /> : null}
         {view === "history" ? <div className="placeholder">历史记录将在本地保存每次输入、输出和生成图。</div> : null}

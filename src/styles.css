@@ -207,3 +207,19 @@ button:disabled {
 .template-row p {
   margin: 0;
 }
+
+.search-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(240px, 1fr) auto;
+}
+
+.search-row input {
+  margin: 0;
+}
+
+.template-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
