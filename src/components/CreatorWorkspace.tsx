@@ -16,6 +16,10 @@ interface ImageGenerationResult {
   imagePath: string;
 }
 
+interface PromptOptimizationResult {
+  prompt: string;
+}
+
 export function CreatorWorkspace() {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
   const [format, setFormat] = useState<ExportFormat>("gpt-image");
@@ -23,10 +27,14 @@ export function CreatorWorkspace() {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [apiPrompt, setApiPrompt] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
-  const exported = useMemo(() => formatPrompt(result, format), [format, result]);
+  const localExported = useMemo(() => formatPrompt(result, format), [format, result]);
+  const exported = apiPrompt || localExported;
 
   useEffect(() => {
     const timer = window.setTimeout(async () => {
@@ -51,6 +59,11 @@ export function CreatorWorkspace() {
     return () => window.clearTimeout(timer);
   }, [input]);
 
+  useEffect(() => {
+    setApiPrompt(null);
+    setApiError(null);
+  }, [input, format]);
+
   async function copyPrompt() {
     await navigator.clipboard.writeText(exported);
     setCopyStatus("已复制");
@@ -69,6 +82,21 @@ export function CreatorWorkspace() {
       setGenerationError(String(err));
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function optimizeWithApi() {
+    setIsOptimizing(true);
+    setApiError(null);
+    try {
+      const optimized = await invoke<PromptOptimizationResult>("optimize_prompt_with_api", {
+        localPrompt: localExported,
+      });
+      setApiPrompt(optimized.prompt);
+    } catch (err) {
+      setApiError(String(err));
+    } finally {
+      setIsOptimizing(false);
     }
   }
 
@@ -93,6 +121,12 @@ export function CreatorWorkspace() {
         <p>{result.zh}</p>
         <h3>英文提示词</h3>
         <p>{result.en}</p>
+        {apiPrompt ? (
+          <>
+            <h3>API 优化版</h3>
+            <p>{apiPrompt}</p>
+          </>
+        ) : null}
         <h3>结构化字段</h3>
         <dl className="field-list">
           {Object.entries(result.structured).map(([key, value]) => (
@@ -113,11 +147,15 @@ export function CreatorWorkspace() {
           </>
         ) : null}
         {templateError ? <p className="inline-error">{templateError}</p> : null}
+        {apiError ? <p className="inline-error">{apiError}</p> : null}
       </div>
 
       <div className="panel">
         <h2>导出 / 预览</h2>
         <textarea readOnly value={exported} />
+        <button disabled={isOptimizing} onClick={optimizeWithApi}>
+          {isOptimizing ? "优化中..." : "API 优化"}
+        </button>
         <button onClick={copyPrompt}>复制提示词</button>
         <button disabled={isGenerating} onClick={generateImage}>
           {isGenerating ? "生成中..." : "生成图片"}

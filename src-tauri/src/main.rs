@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod generation;
 mod imports;
+mod prompt_api;
 mod providers;
 mod workspace;
 
@@ -65,6 +66,13 @@ fn generate_image_preview(prompt: String) -> Result<generation::ImageGenerationR
     generation::generate_image(&root, &config, &prompt)
 }
 
+#[tauri::command]
+fn optimize_prompt_with_api(local_prompt: String) -> Result<prompt_api::PromptOptimizationResult, String> {
+    let root = workspace::default_workspace_root()?;
+    let config = config::load_config(&root)?;
+    prompt_api::optimize_prompt(&config, &local_prompt)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -76,7 +84,8 @@ fn main() {
             search_prompt_templates,
             get_app_config,
             save_app_config,
-            generate_image_preview
+            generate_image_preview,
+            optimize_prompt_with_api
         ])
         .run(tauri::generate_context!())
         .expect("failed to run PromptWeave");
