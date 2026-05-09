@@ -370,4 +370,4 @@ corepack pnpm tauri build --no-bundle
 
 ## 开源协议
 
-当前仓库尚未添加 LICENSE 文件。正式发布到 GitHub 前，请先选择并添加开源协议，例如 MIT、Apache-2.0 或 GPL 系列。
+本项目基于 Apache License 2.0 开源。详见 [LICENSE](./LICENSE)。
