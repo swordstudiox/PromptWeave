@@ -223,3 +223,8 @@ button:disabled {
   gap: 12px;
   margin-top: 16px;
 }
+
+.matched-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}

@@ -1,12 +1,47 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
+import type { PromptTemplateReference } from "../types/prompt";
+
+interface PromptTemplateRecord {
+  title: string;
+  category: string;
+  promptOriginal: string;
+  negativePrompt?: string;
+  tags: string[];
+}
 
 export function CreatorWorkspace() {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
   const [format, setFormat] = useState<ExportFormat>("gpt-image");
-  const result = useMemo(() => optimizePromptLocally(input), [input]);
+  const [templates, setTemplates] = useState<PromptTemplateReference[]>([]);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
   const exported = useMemo(() => formatPrompt(result, format), [format, result]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      if (!input.trim()) {
+        setTemplates([]);
+        return;
+      }
+
+      try {
+        const records = await invoke<PromptTemplateRecord[]>("search_prompt_templates", {
+          query: input,
+          limit: 3,
+        });
+        setTemplates(records);
+        setTemplateError(null);
+      } catch (err) {
+        setTemplates([]);
+        setTemplateError(String(err));
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [input]);
 
   return (
     <section className="creator-grid">
@@ -38,6 +73,17 @@ export function CreatorWorkspace() {
             </div>
           ))}
         </dl>
+        {result.matchedTemplateTitles.length ? (
+          <>
+            <h3>参考模板</h3>
+            <ul className="matched-list">
+              {result.matchedTemplateTitles.map((title) => (
+                <li key={title}>{title}</li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        {templateError ? <p className="inline-error">{templateError}</p> : null}
       </div>
 
       <div className="panel">

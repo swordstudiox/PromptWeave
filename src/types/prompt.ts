@@ -16,3 +16,11 @@ export interface OptimizedPrompt {
   structured: StructuredPrompt;
   matchedTemplateTitles: string[];
 }
+
+export interface PromptTemplateReference {
+  title: string;
+  category: string;
+  promptOriginal: string;
+  negativePrompt?: string;
+  tags: string[];
+}
