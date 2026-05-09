@@ -20,14 +20,17 @@ fn classify_import_url(url: String) -> imports::ImportUrlInfo {
 }
 
 #[tauri::command]
-fn preview_import_url(url: String) -> Result<imports::ImportPreview, String> {
-    imports::preview_import_url(&url)
+async fn preview_import_url(url: String) -> Result<imports::ImportPreview, String> {
+    run_blocking_command(move || imports::preview_import_url(&url)).await
 }
 
 #[tauri::command]
-fn import_prompt_library(url: String) -> Result<imports::ImportResult, String> {
-    let root = workspace::default_workspace_root()?;
-    imports::import_prompt_library(&root, &url)
+async fn import_prompt_library(url: String) -> Result<imports::ImportResult, String> {
+    run_blocking_command(move || {
+        let root = workspace::default_workspace_root()?;
+        imports::import_prompt_library(&root, &url)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -37,9 +40,22 @@ fn list_prompt_library_sources() -> Result<Vec<db::PromptLibrarySourceRecord>, S
 }
 
 #[tauri::command]
-fn sync_prompt_library_source(source_id: String) -> Result<imports::ImportResult, String> {
-    let root = workspace::default_workspace_root()?;
-    imports::sync_prompt_library_source(&root, &source_id)
+async fn sync_prompt_library_source(source_id: String) -> Result<imports::ImportResult, String> {
+    run_blocking_command(move || {
+        let root = workspace::default_workspace_root()?;
+        imports::sync_prompt_library_source(&root, &source_id)
+    })
+    .await
+}
+
+async fn run_blocking_command<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|err| format!("Background task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -151,4 +167,23 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run PromptWeave");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blocking_command_helper_returns_success() {
+        let result = tauri::async_runtime::block_on(run_blocking_command(|| Ok::<_, String>("ready".to_string())));
+
+        assert_eq!(result.expect("task should succeed"), "ready");
+    }
+
+    #[test]
+    fn blocking_command_helper_returns_task_error() {
+        let result = tauri::async_runtime::block_on(run_blocking_command(|| Err::<String, _>("network failed".to_string())));
+
+        assert_eq!(result.expect_err("task error should propagate"), "network failed");
+    }
 }
