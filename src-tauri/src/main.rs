@@ -31,6 +31,18 @@ fn import_prompt_library(url: String) -> Result<imports::ImportResult, String> {
 }
 
 #[tauri::command]
+fn list_prompt_library_sources() -> Result<Vec<db::PromptLibrarySourceRecord>, String> {
+    let root = workspace::default_workspace_root()?;
+    imports::list_prompt_library_sources(&root)
+}
+
+#[tauri::command]
+fn sync_prompt_library_source(source_id: String) -> Result<imports::ImportResult, String> {
+    let root = workspace::default_workspace_root()?;
+    imports::sync_prompt_library_source(&root, &source_id)
+}
+
+#[tauri::command]
 fn list_prompt_templates(limit: usize) -> Result<Vec<db::PromptTemplateRecord>, String> {
     let root = workspace::default_workspace_root()?;
     let workspace = workspace::ensure_workspace(&root)?;
@@ -123,6 +135,8 @@ fn main() {
             classify_import_url,
             preview_import_url,
             import_prompt_library,
+            list_prompt_library_sources,
+            sync_prompt_library_source,
             list_prompt_templates,
             search_prompt_templates,
             update_prompt_template,

@@ -34,6 +34,30 @@ pub struct TemplateUpdateDraft {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptLibrarySourceRecord {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub source_type: String,
+    pub last_synced_at: Option<String>,
+    pub last_imported_count: usize,
+    pub last_skipped_count: usize,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PromptLibrarySourceDraft {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub source_type: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationHistoryDraft {
@@ -128,6 +152,19 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
               settings_json TEXT NOT NULL DEFAULT '{}',
               image_path TEXT,
               created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_library_sources (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              url TEXT NOT NULL UNIQUE,
+              source_type TEXT NOT NULL,
+              last_synced_at TEXT,
+              last_imported_count INTEGER NOT NULL DEFAULT 0,
+              last_skipped_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
             );
             "#,
         )
@@ -412,6 +449,159 @@ pub fn archive_prompt_template(database_path: &Path, id: &str) -> Result<(), Str
     Ok(())
 }
 
+pub fn upsert_prompt_library_source(database_path: &Path, draft: &PromptLibrarySourceDraft) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO prompt_library_sources (
+              id,
+              name,
+              url,
+              source_type,
+              created_at,
+              updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+            ON CONFLICT(url) DO UPDATE SET
+              name = excluded.name,
+              source_type = excluded.source_type,
+              updated_at = excluded.updated_at
+            "#,
+            params![&draft.id, &draft.name, &draft.url, &draft.source_type, &draft.created_at],
+        )
+        .map_err(|err| format!("Failed to upsert prompt library source '{}': {err}", draft.url))?;
+    Ok(())
+}
+
+pub fn record_prompt_library_source_success(
+    database_path: &Path,
+    id: &str,
+    imported_count: usize,
+    skipped_count: usize,
+    synced_at: &str,
+) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let changed = connection
+        .execute(
+            r#"
+            UPDATE prompt_library_sources
+            SET last_synced_at = ?1,
+                last_imported_count = ?2,
+                last_skipped_count = ?3,
+                last_error = NULL,
+                updated_at = ?1
+            WHERE id = ?4
+            "#,
+            params![synced_at, imported_count as i64, skipped_count as i64, id],
+        )
+        .map_err(|err| format!("Failed to record sync success for source '{id}': {err}"))?;
+    if changed == 0 {
+        return Err(format!("Prompt library source '{id}' was not found"));
+    }
+    Ok(())
+}
+
+pub fn record_prompt_library_source_error(
+    database_path: &Path,
+    id: &str,
+    error: &str,
+    synced_at: &str,
+) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let changed = connection
+        .execute(
+            r#"
+            UPDATE prompt_library_sources
+            SET last_synced_at = ?1,
+                last_error = ?2,
+                updated_at = ?1
+            WHERE id = ?3
+            "#,
+            params![synced_at, error, id],
+        )
+        .map_err(|err| format!("Failed to record sync error for source '{id}': {err}"))?;
+    if changed == 0 {
+        return Err(format!("Prompt library source '{id}' was not found"));
+    }
+    Ok(())
+}
+
+pub fn list_prompt_library_sources(database_path: &Path) -> Result<Vec<PromptLibrarySourceRecord>, String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, name, url, source_type, last_synced_at,
+                   last_imported_count, last_skipped_count, last_error,
+                   created_at, updated_at
+            FROM prompt_library_sources
+            ORDER BY COALESCE(last_synced_at, created_at) DESC, name ASC
+            "#,
+        )
+        .map_err(|err| format!("Failed to prepare source list query: {err}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|err| format!("Failed to query prompt library sources: {err}"))?;
+    let mut sources = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| format!("Failed to read source row: {err}"))? {
+        let imported_count: i64 = row.get(5).map_err(|err| format!("Failed to read imported count: {err}"))?;
+        let skipped_count: i64 = row.get(6).map_err(|err| format!("Failed to read skipped count: {err}"))?;
+        sources.push(PromptLibrarySourceRecord {
+            id: row.get(0).map_err(|err| format!("Failed to read source id: {err}"))?,
+            name: row.get(1).map_err(|err| format!("Failed to read source name: {err}"))?,
+            url: row.get(2).map_err(|err| format!("Failed to read source url: {err}"))?,
+            source_type: row.get(3).map_err(|err| format!("Failed to read source type: {err}"))?,
+            last_synced_at: row.get(4).map_err(|err| format!("Failed to read last synced at: {err}"))?,
+            last_imported_count: imported_count.max(0) as usize,
+            last_skipped_count: skipped_count.max(0) as usize,
+            last_error: row.get(7).map_err(|err| format!("Failed to read source error: {err}"))?,
+            created_at: row.get(8).map_err(|err| format!("Failed to read source created_at: {err}"))?,
+            updated_at: row.get(9).map_err(|err| format!("Failed to read source updated_at: {err}"))?,
+        });
+    }
+
+    Ok(sources)
+}
+
+pub fn get_prompt_library_source(database_path: &Path, id: &str) -> Result<PromptLibrarySourceRecord, String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, name, url, source_type, last_synced_at,
+                   last_imported_count, last_skipped_count, last_error,
+                   created_at, updated_at
+            FROM prompt_library_sources
+            WHERE id = ?1
+            "#,
+        )
+        .map_err(|err| format!("Failed to prepare source lookup query: {err}"))?;
+    statement
+        .query_row(params![id], |row| {
+            let imported_count: i64 = row.get(5)?;
+            let skipped_count: i64 = row.get(6)?;
+            Ok(PromptLibrarySourceRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                source_type: row.get(3)?,
+                last_synced_at: row.get(4)?,
+                last_imported_count: imported_count.max(0) as usize,
+                last_skipped_count: skipped_count.max(0) as usize,
+                last_error: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })
+        .map_err(|err| format!("Prompt library source '{id}' was not found: {err}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,6 +718,95 @@ mod tests {
         let searched = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
         assert!(listed.is_empty());
         assert!(searched.is_empty());
+    }
+
+    #[test]
+    fn library_source_upsert_and_sync_success_are_listed() {
+        let database_path = test_database_path("library-source-success");
+        bootstrap(&database_path).expect("database should bootstrap");
+
+        upsert_prompt_library_source(
+            &database_path,
+            &PromptLibrarySourceDraft {
+                id: "source-1".to_string(),
+                name: "awesome-gpt-image-2-prompts".to_string(),
+                url: "https://github.com/example/awesome-gpt-image-2-prompts".to_string(),
+                source_type: "github_repo".to_string(),
+                created_at: "1".to_string(),
+            },
+        )
+        .expect("source should upsert");
+        record_prompt_library_source_success(&database_path, "source-1", 3, 2, "2")
+            .expect("sync success should record");
+
+        let sources = list_prompt_library_sources(&database_path).expect("sources should list");
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].id, "source-1");
+        assert_eq!(sources[0].name, "awesome-gpt-image-2-prompts");
+        assert_eq!(sources[0].last_imported_count, 3);
+        assert_eq!(sources[0].last_skipped_count, 2);
+        assert_eq!(sources[0].last_synced_at.as_deref(), Some("2"));
+        assert!(sources[0].last_error.is_none());
+    }
+
+    #[test]
+    fn library_source_sync_error_is_recorded() {
+        let database_path = test_database_path("library-source-error");
+        bootstrap(&database_path).expect("database should bootstrap");
+        upsert_prompt_library_source(
+            &database_path,
+            &PromptLibrarySourceDraft {
+                id: "source-1".to_string(),
+                name: "Broken Repo".to_string(),
+                url: "https://github.com/example/missing".to_string(),
+                source_type: "github_repo".to_string(),
+                created_at: "1".to_string(),
+            },
+        )
+        .expect("source should upsert");
+
+        record_prompt_library_source_error(&database_path, "source-1", "network failed", "3")
+            .expect("sync error should record");
+        let sources = list_prompt_library_sources(&database_path).expect("sources should list");
+
+        assert_eq!(sources[0].last_synced_at.as_deref(), Some("3"));
+        assert_eq!(sources[0].last_error.as_deref(), Some("network failed"));
+    }
+
+    #[test]
+    fn library_sources_are_ordered_by_latest_sync_then_creation() {
+        let database_path = test_database_path("library-source-order");
+        bootstrap(&database_path).expect("database should bootstrap");
+        upsert_prompt_library_source(
+            &database_path,
+            &PromptLibrarySourceDraft {
+                id: "older".to_string(),
+                name: "Older".to_string(),
+                url: "https://github.com/example/older".to_string(),
+                source_type: "github_repo".to_string(),
+                created_at: "1".to_string(),
+            },
+        )
+        .expect("older source should upsert");
+        upsert_prompt_library_source(
+            &database_path,
+            &PromptLibrarySourceDraft {
+                id: "newer".to_string(),
+                name: "Newer".to_string(),
+                url: "https://github.com/example/newer".to_string(),
+                source_type: "github_repo".to_string(),
+                created_at: "2".to_string(),
+            },
+        )
+        .expect("newer source should upsert");
+        record_prompt_library_source_success(&database_path, "older", 1, 0, "4")
+            .expect("older source should sync");
+
+        let sources = list_prompt_library_sources(&database_path).expect("sources should list");
+
+        assert_eq!(sources[0].id, "older");
+        assert_eq!(sources[1].id, "newer");
     }
 
     #[test]

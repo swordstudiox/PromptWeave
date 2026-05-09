@@ -46,6 +46,7 @@ pub struct ImportPreview {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
+    pub source_id: String,
     pub imported_count: usize,
     pub skipped_count: usize,
     pub warnings: Vec<String>,
@@ -100,13 +101,49 @@ pub fn import_prompt_library(workspace_root: &std::path::Path, url: &str) -> Res
     let preview = preview_import_url(url)?;
     let workspace = crate::workspace::ensure_workspace(workspace_root)?;
     db::bootstrap(std::path::Path::new(&workspace.database_path))?;
-    let imported_count = db::insert_prompt_templates(std::path::Path::new(&workspace.database_path), &preview.items)?;
+    let database_path = std::path::Path::new(&workspace.database_path);
+    let source_id = source_id(&preview.source.normalized_url);
+    let synced_at = current_timestamp();
+    db::upsert_prompt_library_source(
+        database_path,
+        &db::PromptLibrarySourceDraft {
+            id: source_id.clone(),
+            name: source_name(&preview.source.normalized_url),
+            url: preview.source.normalized_url.clone(),
+            source_type: preview.source.source_type.clone(),
+            created_at: synced_at.clone(),
+        },
+    )?;
+    let imported_count = db::insert_prompt_templates(database_path, &preview.items)?;
+    let skipped_count = preview.items.len().saturating_sub(imported_count);
+    db::record_prompt_library_source_success(database_path, &source_id, imported_count, skipped_count, &synced_at)?;
 
     Ok(ImportResult {
+        source_id,
         imported_count,
-        skipped_count: preview.items.len().saturating_sub(imported_count),
+        skipped_count,
         warnings: preview.warnings,
     })
+}
+
+pub fn list_prompt_library_sources(workspace_root: &std::path::Path) -> Result<Vec<db::PromptLibrarySourceRecord>, String> {
+    let workspace = crate::workspace::ensure_workspace(workspace_root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::list_prompt_library_sources(std::path::Path::new(&workspace.database_path))
+}
+
+pub fn sync_prompt_library_source(workspace_root: &std::path::Path, source_id: &str) -> Result<ImportResult, String> {
+    let workspace = crate::workspace::ensure_workspace(workspace_root)?;
+    let database_path = std::path::Path::new(&workspace.database_path);
+    db::bootstrap(database_path)?;
+    let source = db::get_prompt_library_source(database_path, source_id)?;
+    match import_prompt_library(workspace_root, &source.url) {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            let _ = db::record_prompt_library_source_error(database_path, source_id, &err, &current_timestamp());
+            Err(err)
+        }
+    }
 }
 
 pub fn parse_prompt_document(
@@ -567,6 +604,18 @@ fn hash_template(source_url: &str, prompt: &str) -> String {
     hasher.update(b"\n");
     hasher.update(prompt.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn source_id(url: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(url.trim().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn source_name(url: &str) -> String {
+    parse_github_repo(url)
+        .map(|repo| repo.name)
+        .unwrap_or_else(|_| url.trim().trim_end_matches('/').rsplit('/').next().unwrap_or("Prompt Library").to_string())
 }
 
 fn infer_model_hint(source_repo: &str) -> String {

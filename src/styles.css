@@ -227,6 +227,16 @@ button:disabled {
   margin-top: 18px;
 }
 
+.source-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.source-row small {
+  overflow-wrap: anywhere;
+}
+
 .template-row {
   border-top: 1px solid #eef2f6;
   display: grid;
