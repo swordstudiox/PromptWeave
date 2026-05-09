@@ -1,4 +1,4 @@
-# PromptWeave 提示织机
+# PromptWeave 织语
 
 PromptWeave 是一个面向图像创作者的本地提示词工作台。它可以从 GitHub 上的 GPT-Image / 图像生成提示词合集导入参考模板，帮助用户把自然语言想法整理成更适合图像生成工具使用的 prompt，并支持复制导出、图片预览和历史复用。
 

@@ -31,7 +31,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <strong>PromptWeave</strong>
-          <span>提示织机</span>
+          <span>织语</span>
         </div>
         <nav>
           {navItems.map((item) => (
