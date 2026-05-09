@@ -116,6 +116,12 @@ select {
   width: auto;
 }
 
+.compact-checkbox {
+  color: #475467;
+  font-size: 13px;
+  margin: 0;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d8dee8;
@@ -236,6 +242,59 @@ button:disabled {
 
 .template-row p {
   margin: 0;
+}
+
+.template-title-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.template-title-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.template-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-actions button {
+  margin-right: 0;
+}
+
+.secondary-button {
+  background: #eef4ff;
+  color: #175cd3;
+}
+
+.danger-button {
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.template-edit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.template-edit-form input,
+.template-edit-form textarea {
+  margin: 0;
+}
+
+.template-edit-form textarea {
+  min-height: 96px;
+}
+
+.template-edit-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .search-row {

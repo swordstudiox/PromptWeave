@@ -47,6 +47,30 @@ fn search_prompt_templates(query: String, limit: usize) -> Result<Vec<db::Prompt
 }
 
 #[tauri::command]
+fn update_prompt_template(draft: db::TemplateUpdateDraft) -> Result<(), String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::update_prompt_template(std::path::Path::new(&workspace.database_path), &draft)
+}
+
+#[tauri::command]
+fn toggle_prompt_template_favorite(id: String, is_favorite: bool) -> Result<(), String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::toggle_prompt_template_favorite(std::path::Path::new(&workspace.database_path), &id, is_favorite)
+}
+
+#[tauri::command]
+fn archive_prompt_template(id: String) -> Result<(), String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::archive_prompt_template(std::path::Path::new(&workspace.database_path), &id)
+}
+
+#[tauri::command]
 fn save_generation_history(draft: db::GenerationHistoryDraft) -> Result<(), String> {
     let root = workspace::default_workspace_root()?;
     let workspace = workspace::ensure_workspace(&root)?;
@@ -101,6 +125,9 @@ fn main() {
             import_prompt_library,
             list_prompt_templates,
             search_prompt_templates,
+            update_prompt_template,
+            toggle_prompt_template_favorite,
+            archive_prompt_template,
             save_generation_history,
             list_generation_history,
             get_app_config,

@@ -19,6 +19,19 @@ pub struct PromptTemplateRecord {
     pub aspect_ratio: Option<String>,
     pub tags: Vec<String>,
     pub imported_at: String,
+    pub is_favorite: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateUpdateDraft {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub prompt_original: String,
+    pub negative_prompt: Option<String>,
+    pub aspect_ratio: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -131,6 +144,18 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
         "settings_json",
         "TEXT NOT NULL DEFAULT '{}'",
     )?;
+    ensure_column(
+        &connection,
+        "prompt_templates",
+        "is_favorite",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        &connection,
+        "prompt_templates",
+        "is_archived",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
 
     Ok(())
 }
@@ -162,9 +187,10 @@ pub fn list_prompt_templates(database_path: &Path, limit: usize) -> Result<Vec<P
         .prepare(
             r#"
             SELECT id, title, category, source_repo, source_url, model_hint, language,
-                   prompt_original, negative_prompt, aspect_ratio, tags_json, imported_at
+                   prompt_original, negative_prompt, aspect_ratio, tags_json, imported_at, is_favorite
             FROM prompt_templates
-            ORDER BY imported_at DESC, title ASC
+            WHERE is_archived = 0
+            ORDER BY is_favorite DESC, imported_at DESC, title ASC
             LIMIT ?1
             "#,
         )
@@ -187,10 +213,11 @@ pub fn search_prompt_templates(database_path: &Path, query: &str, limit: usize) 
         .prepare(
             r#"
             SELECT t.id, t.title, t.category, t.source_repo, t.source_url, t.model_hint, t.language,
-                   t.prompt_original, t.negative_prompt, t.aspect_ratio, t.tags_json, t.imported_at
+                   t.prompt_original, t.negative_prompt, t.aspect_ratio, t.tags_json, t.imported_at, t.is_favorite
             FROM prompt_templates_fts f
             JOIN prompt_templates t ON t.rowid = f.rowid
             WHERE prompt_templates_fts MATCH ?1
+              AND t.is_archived = 0
             ORDER BY rank
             LIMIT ?2
             "#,
@@ -209,6 +236,7 @@ fn collect_template_rows(mut rows: rusqlite::Rows<'_>) -> Result<Vec<PromptTempl
     while let Some(row) = rows.next().map_err(|err| format!("Failed to read template row: {err}"))? {
         let tags_json: String = row.get(10).map_err(|err| format!("Failed to read tags JSON: {err}"))?;
         let tags = serde_json::from_str(&tags_json).unwrap_or_default();
+        let is_favorite: i64 = row.get(12).map_err(|err| format!("Failed to read favorite state: {err}"))?;
         templates.push(PromptTemplateRecord {
             id: row.get(0).map_err(|err| format!("Failed to read id: {err}"))?,
             title: row.get(1).map_err(|err| format!("Failed to read title: {err}"))?,
@@ -222,6 +250,7 @@ fn collect_template_rows(mut rows: rusqlite::Rows<'_>) -> Result<Vec<PromptTempl
             aspect_ratio: row.get(9).map_err(|err| format!("Failed to read aspect ratio: {err}"))?,
             tags,
             imported_at: row.get(11).map_err(|err| format!("Failed to read imported_at: {err}"))?,
+            is_favorite: is_favorite != 0,
         });
     }
     Ok(templates)
@@ -309,6 +338,80 @@ pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraf
     Ok(inserted)
 }
 
+pub fn update_prompt_template(database_path: &Path, draft: &TemplateUpdateDraft) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let tags_json = serde_json::to_string(&draft.tags).map_err(|err| format!("Failed to serialize tags: {err}"))?;
+    let changed = connection
+        .execute(
+            r#"
+            UPDATE prompt_templates
+            SET title = ?1,
+                category = ?2,
+                prompt_original = ?3,
+                negative_prompt = ?4,
+                aspect_ratio = ?5,
+                tags_json = ?6
+            WHERE id = ?7
+              AND is_archived = 0
+            "#,
+            params![
+                &draft.title,
+                &draft.category,
+                &draft.prompt_original,
+                &draft.negative_prompt,
+                &draft.aspect_ratio,
+                &tags_json,
+                &draft.id,
+            ],
+        )
+        .map_err(|err| format!("Failed to update prompt template '{}': {err}", draft.id))?;
+    if changed == 0 {
+        return Err(format!("Prompt template '{}' was not found", draft.id));
+    }
+    Ok(())
+}
+
+pub fn toggle_prompt_template_favorite(database_path: &Path, id: &str, is_favorite: bool) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let changed = connection
+        .execute(
+            r#"
+            UPDATE prompt_templates
+            SET is_favorite = ?1
+            WHERE id = ?2
+              AND is_archived = 0
+            "#,
+            params![if is_favorite { 1 } else { 0 }, id],
+        )
+        .map_err(|err| format!("Failed to update favorite state for '{id}': {err}"))?;
+    if changed == 0 {
+        return Err(format!("Prompt template '{id}' was not found"));
+    }
+    Ok(())
+}
+
+pub fn archive_prompt_template(database_path: &Path, id: &str) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let changed = connection
+        .execute(
+            r#"
+            UPDATE prompt_templates
+            SET is_archived = 1
+            WHERE id = ?1
+              AND is_archived = 0
+            "#,
+            params![id],
+        )
+        .map_err(|err| format!("Failed to archive prompt template '{id}': {err}"))?;
+    if changed == 0 {
+        return Err(format!("Prompt template '{id}' was not found"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +471,63 @@ mod tests {
 
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].title, "Snow Portrait");
+    }
+
+    #[test]
+    fn toggles_prompt_template_favorite_state() {
+        let database_path = test_database_path("favorite");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        let initial = list_prompt_templates(&database_path, 20).expect("templates should list");
+        assert!(!initial[0].is_favorite);
+
+        toggle_prompt_template_favorite(&database_path, "template-1", true).expect("favorite should update");
+        let favorites = list_prompt_templates(&database_path, 20).expect("templates should list");
+
+        assert!(favorites[0].is_favorite);
+    }
+
+    #[test]
+    fn updates_prompt_template_and_refreshes_search_index() {
+        let database_path = test_database_path("update");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        update_prompt_template(
+            &database_path,
+            &TemplateUpdateDraft {
+                id: "template-1".to_string(),
+                title: "Neon Product Poster".to_string(),
+                category: "Product".to_string(),
+                prompt_original: "A neon product poster with glossy reflections.".to_string(),
+                negative_prompt: None,
+                aspect_ratio: Some("4:5".to_string()),
+                tags: vec!["product".to_string(), "neon".to_string()],
+            },
+        )
+        .expect("template should update");
+        let templates = search_prompt_templates(&database_path, "neon", 20).expect("templates should search");
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].title, "Neon Product Poster");
+        assert_eq!(templates[0].category, "Product");
+        assert_eq!(templates[0].aspect_ratio.as_deref(), Some("4:5"));
+        assert_eq!(templates[0].tags, vec!["product", "neon"]);
+    }
+
+    #[test]
+    fn archives_prompt_template_from_list_and_search() {
+        let database_path = test_database_path("archive");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        archive_prompt_template(&database_path, "template-1").expect("template should archive");
+
+        let listed = list_prompt_templates(&database_path, 20).expect("templates should list");
+        let searched = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+        assert!(listed.is_empty());
+        assert!(searched.is_empty());
     }
 
     #[test]
