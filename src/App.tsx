@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CreatorWorkspace } from "./components/CreatorWorkspace";
+import { HistoryPanel, type HistoryLoadPayload } from "./components/HistoryPanel";
 import { ImportPanel } from "./components/ImportPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TemplateLibrary } from "./components/TemplateLibrary";
@@ -17,6 +18,7 @@ const navItems: Array<{ id: View; label: string }> = [
 
 export default function App() {
   const [view, setView] = useState<View>("creator");
+  const [historyPayload, setHistoryPayload] = useState<HistoryLoadPayload | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,9 +48,16 @@ export default function App() {
       <section className="main-panel">
         {error ? <div className="error-banner">{error}</div> : null}
         {workspace ? <div className="workspace-path">工作区：{workspace.dataDir}</div> : null}
-        {view === "creator" ? <CreatorWorkspace /> : null}
+        {view === "creator" ? <CreatorWorkspace historyPayload={historyPayload} /> : null}
         {view === "templates" ? <TemplateLibrary /> : null}
-        {view === "history" ? <div className="placeholder">历史记录将在本地保存每次输入、输出和生成图。</div> : null}
+        {view === "history" ? (
+          <HistoryPanel
+            onLoad={(payload) => {
+              setHistoryPayload(payload);
+              setView("creator");
+            }}
+          />
+        ) : null}
         {view === "imports" ? <ImportPanel /> : null}
         {view === "settings" ? <SettingsPanel /> : null}
       </section>

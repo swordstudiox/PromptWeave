@@ -128,6 +128,17 @@ select {
   margin: 0 0 14px;
 }
 
+.panel-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+}
+
 .panel h3 {
   font-size: 14px;
   margin: 16px 0 8px;
@@ -263,6 +274,18 @@ button:disabled {
 .image-preview small {
   color: #667085;
   overflow-wrap: anywhere;
+}
+
+.history-image {
+  display: grid;
+  gap: 6px;
+  max-width: 220px;
+}
+
+.history-image img {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  max-width: 100%;
 }
 
 .control-grid {

@@ -1,5 +1,5 @@
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::imports::PromptTemplateDraft;
@@ -19,6 +19,34 @@ pub struct PromptTemplateRecord {
     pub aspect_ratio: Option<String>,
     pub tags: Vec<String>,
     pub imported_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationHistoryDraft {
+    pub id: String,
+    pub user_input: String,
+    pub prompt_zh: String,
+    pub prompt_en: String,
+    pub export_format: String,
+    pub matched_templates_json: String,
+    pub settings_json: String,
+    pub image_path: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationHistoryRecord {
+    pub id: String,
+    pub user_input: String,
+    pub prompt_zh: String,
+    pub prompt_en: String,
+    pub export_format: String,
+    pub matched_templates: Vec<String>,
+    pub settings_json: String,
+    pub image_path: Option<String>,
+    pub created_at: String,
 }
 
 pub fn bootstrap(database_path: &Path) -> Result<(), String> {
@@ -83,13 +111,47 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
               prompt_zh TEXT NOT NULL,
               prompt_en TEXT NOT NULL,
               export_format TEXT NOT NULL,
+              matched_templates_json TEXT NOT NULL DEFAULT '[]',
+              settings_json TEXT NOT NULL DEFAULT '{}',
               image_path TEXT,
               created_at TEXT NOT NULL
             );
             "#,
         )
         .map_err(|err| format!("Failed to bootstrap database: {err}"))?;
+    ensure_column(
+        &connection,
+        "generation_history",
+        "matched_templates_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        &connection,
+        "generation_history",
+        "settings_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
 
+    Ok(())
+}
+
+fn ensure_column(connection: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|err| format!("Failed to inspect {table} schema: {err}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|err| format!("Failed to read {table} schema: {err}"))?;
+    while let Some(row) = rows.next().map_err(|err| format!("Failed to read {table} column: {err}"))? {
+        let name: String = row.get(1).map_err(|err| format!("Failed to read {table} column name: {err}"))?;
+        if name == column {
+            return Ok(());
+        }
+    }
+
+    connection
+        .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
+        .map_err(|err| format!("Failed to add {table}.{column}: {err}"))?;
     Ok(())
 }
 
@@ -307,4 +369,101 @@ mod tests {
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].title, "Snow Portrait");
     }
+
+    #[test]
+    fn saves_and_lists_generation_history() {
+        let database_path = test_database_path("history");
+        bootstrap(&database_path).expect("database should bootstrap");
+        let draft = GenerationHistoryDraft {
+            id: "history-1".to_string(),
+            user_input: "红色斗篷女孩".to_string(),
+            prompt_zh: "中文优化提示词".to_string(),
+            prompt_en: "English optimized prompt".to_string(),
+            export_format: "gpt-image".to_string(),
+            matched_templates_json: "[\"Snow Portrait\"]".to_string(),
+            settings_json: "{\"aspectRatio\":\"1:1\"}".to_string(),
+            image_path: Some("F:/image.png".to_string()),
+            created_at: "2".to_string(),
+        };
+
+        save_generation_history(&database_path, &draft).expect("history should save");
+        let history = list_generation_history(&database_path, 20).expect("history should list");
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].user_input, "红色斗篷女孩");
+        assert_eq!(history[0].image_path.as_deref(), Some("F:/image.png"));
+    }
+}
+
+pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDraft) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    connection
+        .execute(
+            r#"
+            INSERT OR REPLACE INTO generation_history (
+              id,
+              user_input,
+              prompt_zh,
+              prompt_en,
+              export_format,
+              matched_templates_json,
+              settings_json,
+              image_path,
+              created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            params![
+                &draft.id,
+                &draft.user_input,
+                &draft.prompt_zh,
+                &draft.prompt_en,
+                &draft.export_format,
+                &draft.matched_templates_json,
+                &draft.settings_json,
+                &draft.image_path,
+                &draft.created_at,
+            ],
+        )
+        .map_err(|err| format!("Failed to save generation history: {err}"))?;
+    Ok(())
+}
+
+pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec<GenerationHistoryRecord>, String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, user_input, prompt_zh, prompt_en, export_format,
+                   matched_templates_json, settings_json, image_path, created_at
+            FROM generation_history
+            ORDER BY created_at DESC
+            LIMIT ?1
+            "#,
+        )
+        .map_err(|err| format!("Failed to prepare history query: {err}"))?;
+    let mut rows = statement
+        .query(params![limit])
+        .map_err(|err| format!("Failed to query history: {err}"))?;
+    let mut history = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| format!("Failed to read history row: {err}"))? {
+        let matched_templates_json: String = row
+            .get(5)
+            .map_err(|err| format!("Failed to read matched templates JSON: {err}"))?;
+        history.push(GenerationHistoryRecord {
+            id: row.get(0).map_err(|err| format!("Failed to read history id: {err}"))?,
+            user_input: row.get(1).map_err(|err| format!("Failed to read user input: {err}"))?,
+            prompt_zh: row.get(2).map_err(|err| format!("Failed to read zh prompt: {err}"))?,
+            prompt_en: row.get(3).map_err(|err| format!("Failed to read en prompt: {err}"))?,
+            export_format: row.get(4).map_err(|err| format!("Failed to read export format: {err}"))?,
+            matched_templates: serde_json::from_str(&matched_templates_json).unwrap_or_default(),
+            settings_json: row.get(6).map_err(|err| format!("Failed to read settings JSON: {err}"))?,
+            image_path: row.get(7).map_err(|err| format!("Failed to read image path: {err}"))?,
+            created_at: row.get(8).map_err(|err| format!("Failed to read created_at: {err}"))?,
+        });
+    }
+
+    Ok(history)
 }

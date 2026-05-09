@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
 import type { CreationSettings, PromptTemplateReference } from "../types/prompt";
+import type { HistoryLoadPayload } from "./HistoryPanel";
 
 interface PromptTemplateRecord {
   title: string;
@@ -20,7 +21,7 @@ interface PromptOptimizationResult {
   prompt: string;
 }
 
-export function CreatorWorkspace() {
+export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLoadPayload | null }) {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
   const [format, setFormat] = useState<ExportFormat>("gpt-image");
   const [settings, setSettings] = useState<CreationSettings>({
@@ -47,6 +48,14 @@ export function CreatorWorkspace() {
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
   const localExported = useMemo(() => formatPrompt(result, format, settings), [format, result, settings]);
   const exported = apiPrompt || localExported;
+
+  useEffect(() => {
+    if (!historyPayload) {
+      return;
+    }
+    setInput(historyPayload.input);
+    setFormat(historyPayload.format);
+  }, [historyPayload]);
 
   useEffect(() => {
     const timer = window.setTimeout(async () => {
@@ -78,6 +87,7 @@ export function CreatorWorkspace() {
 
   async function copyPrompt() {
     await navigator.clipboard.writeText(exported);
+    await saveHistory();
     setCopyStatus("已复制");
     window.setTimeout(() => setCopyStatus(null), 1600);
   }
@@ -95,6 +105,7 @@ export function CreatorWorkspace() {
         },
       });
       setImagePath(generated.imagePath);
+      await saveHistory(generated.imagePath);
     } catch (err) {
       setGenerationError(String(err));
     } finally {
@@ -110,11 +121,29 @@ export function CreatorWorkspace() {
         localPrompt: localExported,
       });
       setApiPrompt(optimized.prompt);
+      await saveHistory(undefined, optimized.prompt);
     } catch (err) {
       setApiError(String(err));
     } finally {
       setIsOptimizing(false);
     }
+  }
+
+  async function saveHistory(imagePath?: string, promptOverride?: string) {
+    const now = Date.now().toString();
+    await invoke("save_generation_history", {
+      draft: {
+        id: `history-${now}-${Math.random().toString(16).slice(2)}`,
+        userInput: input,
+        promptZh: result.zh,
+        promptEn: promptOverride || exported,
+        exportFormat: format,
+        matchedTemplatesJson: JSON.stringify(result.matchedTemplateTitles),
+        settingsJson: JSON.stringify(settings),
+        imagePath,
+        createdAt: now,
+      },
+    });
   }
 
   return (

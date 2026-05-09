@@ -47,6 +47,22 @@ fn search_prompt_templates(query: String, limit: usize) -> Result<Vec<db::Prompt
 }
 
 #[tauri::command]
+fn save_generation_history(draft: db::GenerationHistoryDraft) -> Result<(), String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::save_generation_history(std::path::Path::new(&workspace.database_path), &draft)
+}
+
+#[tauri::command]
+fn list_generation_history(limit: usize) -> Result<Vec<db::GenerationHistoryRecord>, String> {
+    let root = workspace::default_workspace_root()?;
+    let workspace = workspace::ensure_workspace(&root)?;
+    db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+    db::list_generation_history(std::path::Path::new(&workspace.database_path), limit)
+}
+
+#[tauri::command]
 fn get_app_config() -> Result<config::AppConfig, String> {
     let root = workspace::default_workspace_root()?;
     workspace::ensure_workspace(&root)?;
@@ -85,6 +101,8 @@ fn main() {
             import_prompt_library,
             list_prompt_templates,
             search_prompt_templates,
+            save_generation_history,
+            list_generation_history,
             get_app_config,
             save_app_config,
             generate_image_preview,
