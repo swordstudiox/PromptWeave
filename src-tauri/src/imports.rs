@@ -127,11 +127,38 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
     let mut current_prompt: Option<String> = None;
     let mut current_negative: Option<String> = None;
     let mut current_aspect: Option<String> = None;
+    let mut current_author: Option<String> = None;
+    let mut current_images: Vec<String> = Vec::new();
+    let mut in_prompt_fence = false;
+    let mut fence_buffer: Vec<String> = Vec::new();
     let mut items = Vec::new();
 
     for raw_line in content.lines() {
         let line = raw_line.trim();
         if line.is_empty() {
+            continue;
+        }
+
+        if in_prompt_fence {
+            if line.starts_with("```") {
+                in_prompt_fence = false;
+                let prompt = fence_buffer.join("\n").trim().to_string();
+                fence_buffer.clear();
+                if !prompt.is_empty() {
+                    current_prompt = Some(prompt);
+                }
+            } else {
+                fence_buffer.push(line.to_string());
+            }
+            continue;
+        }
+
+        if line.starts_with("```") {
+            let fence_lang = line.trim_start_matches('`').trim().to_ascii_lowercase();
+            if fence_lang.contains("prompt") || fence_lang.is_empty() {
+                in_prompt_fence = true;
+                fence_buffer.clear();
+            }
             continue;
         }
 
@@ -141,13 +168,16 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
                 source_url,
                 &current_category,
                 &current_title,
+                current_author.as_deref(),
                 &mut current_prompt,
                 &mut current_negative,
                 &mut current_aspect,
+                &mut current_images,
                 &mut items,
             );
             current_category = clean_heading(title);
             current_title.clear();
+            current_author = None;
             continue;
         }
 
@@ -157,12 +187,21 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
                 source_url,
                 &current_category,
                 &current_title,
+                current_author.as_deref(),
                 &mut current_prompt,
                 &mut current_negative,
                 &mut current_aspect,
+                &mut current_images,
                 &mut items,
             );
-            current_title = clean_heading(title);
+            let (title, author) = split_title_author(&clean_heading(title));
+            current_title = title;
+            current_author = author;
+            continue;
+        }
+
+        if let Some(image_url) = extract_markdown_image_url(line) {
+            current_images.push(image_url);
             continue;
         }
 
@@ -190,9 +229,11 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
         source_url,
         &current_category,
         &current_title,
+        current_author.as_deref(),
         &mut current_prompt,
         &mut current_negative,
         &mut current_aspect,
+        &mut current_images,
         &mut items,
     );
 
@@ -204,16 +245,18 @@ fn flush_markdown_item(
     source_url: &str,
     category: &str,
     title: &str,
+    author: Option<&str>,
     prompt: &mut Option<String>,
     negative_prompt: &mut Option<String>,
     aspect_ratio: &mut Option<String>,
+    preview_image_urls: &mut Vec<String>,
     items: &mut Vec<PromptTemplateDraft>,
 ) {
     if let Some(prompt_original) = prompt.take() {
         if prompt_original.trim().is_empty() {
             return;
         }
-        items.push(build_prompt_draft(
+        let mut draft = build_prompt_draft(
             source_repo,
             source_url,
             if title.is_empty() { "Imported Prompt" } else { title },
@@ -222,7 +265,10 @@ fn flush_markdown_item(
             negative_prompt.take(),
             aspect_ratio.take(),
             Vec::new(),
-        ));
+        );
+        draft.author = author.map(ToOwned::to_owned);
+        draft.preview_image_urls = std::mem::take(preview_image_urls);
+        items.push(draft);
     }
 }
 
@@ -464,6 +510,28 @@ fn clean_heading(value: &str) -> String {
     value.trim().trim_matches('#').trim().to_string()
 }
 
+fn split_title_author(title: &str) -> (String, Option<String>) {
+    let Some(start) = title.rfind("(by ") else {
+        return (title.to_string(), None);
+    };
+    if !title.ends_with(')') {
+        return (title.to_string(), None);
+    }
+    let clean_title = title[..start].trim().to_string();
+    let author = title[start + 4..title.len() - 1].trim().to_string();
+    (clean_title, (!author.is_empty()).then_some(author))
+}
+
+fn extract_markdown_image_url(line: &str) -> Option<String> {
+    if !line.starts_with("![") {
+        return None;
+    }
+    let start = line.find("](")? + 2;
+    let end = line[start..].find(')')? + start;
+    let url = line[start..end].trim();
+    (!url.is_empty()).then(|| url.to_string())
+}
+
 fn string_field(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         map.get(*key)
@@ -601,5 +669,60 @@ Aspect Ratio: 16:9
         assert_eq!(items[0].category, "Poster");
         assert_eq!(items[0].prompt_original, "A premium perfume bottle on reflective glass.");
         assert_eq!(items[0].tags, vec!["product".to_string(), "poster".to_string()]);
+    }
+
+    #[test]
+    fn extracts_prompt_from_fenced_code_block_with_image_and_author() {
+        let markdown = r#"
+## Character
+
+### Neon Samurai (by @artist)
+
+![preview](https://example.com/neon.png)
+
+```prompt
+A neon samurai standing in the rain, cinematic lighting.
+```
+
+Negative Prompt: low quality
+"#;
+
+        let items = parse_prompt_document(
+            "https://github.com/example/repo",
+            "https://raw.githubusercontent.com/example/repo/main/README.md",
+            markdown,
+        )
+        .expect("markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Neon Samurai");
+        assert_eq!(items[0].author.as_deref(), Some("@artist"));
+        assert_eq!(items[0].prompt_original, "A neon samurai standing in the rain, cinematic lighting.");
+        assert_eq!(items[0].preview_image_urls, vec!["https://example.com/neon.png".to_string()]);
+    }
+
+    #[test]
+    fn extracts_multiple_prompt_cases_in_one_category() {
+        let markdown = r#"
+## Posters
+
+### Perfume Ad
+Prompt: A luxury perfume poster with reflective glass.
+
+### Coffee Ad
+Prompt: A warm coffee shop poster with morning light.
+"#;
+
+        let items = parse_prompt_document(
+            "https://github.com/example/repo",
+            "https://raw.githubusercontent.com/example/repo/main/README.md",
+            markdown,
+        )
+        .expect("markdown should parse");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Perfume Ad");
+        assert_eq!(items[1].title, "Coffee Ad");
+        assert_eq!(items[1].category, "Posters");
     }
 }

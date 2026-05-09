@@ -20,6 +20,14 @@ pub struct ImageGenerationResult {
     pub image_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationOptions {
+    pub size: String,
+    pub quality: String,
+    pub n: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct ImageApiResponse {
     data: Vec<ImageApiData>,
@@ -31,14 +39,19 @@ struct ImageApiData {
     url: Option<String>,
 }
 
-pub fn generate_image(workspace_root: &Path, config: &AppConfig, prompt: &str) -> Result<ImageGenerationResult, String> {
+pub fn generate_image(
+    workspace_root: &Path,
+    config: &AppConfig,
+    prompt: &str,
+    options: &ImageGenerationOptions,
+) -> Result<ImageGenerationResult, String> {
     let request = build_image_request(config, prompt)?;
     let body = json!({
         "model": request.model,
         "prompt": request.prompt,
-        "size": "1024x1024",
-        "quality": "medium",
-        "n": 1
+        "size": options.size,
+        "quality": options.quality,
+        "n": options.n.clamp(1, 4)
     });
     let response = ureq::post(&request.url)
         .header("Authorization", &format!("Bearer {}", request.api_key))

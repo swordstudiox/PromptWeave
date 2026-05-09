@@ -24,3 +24,16 @@ export interface PromptTemplateReference {
   negativePrompt?: string;
   tags: string[];
 }
+
+export interface CreationSettings {
+  aspectRatio: string;
+  imageSize: string;
+  imageQuality: "low" | "medium" | "high" | "auto";
+  imageCount: number;
+  midjourneyStylize: number;
+  midjourneyChaos: number;
+  sdSteps: number;
+  sdCfg: number;
+  sdSampler: string;
+  sdSeed: string;
+}

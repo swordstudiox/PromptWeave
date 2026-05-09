@@ -60,10 +60,13 @@ fn save_app_config(config: config::AppConfig) -> Result<config::AppConfig, Strin
 }
 
 #[tauri::command]
-fn generate_image_preview(prompt: String) -> Result<generation::ImageGenerationResult, String> {
+fn generate_image_preview(
+    prompt: String,
+    options: generation::ImageGenerationOptions,
+) -> Result<generation::ImageGenerationResult, String> {
     let root = workspace::default_workspace_root()?;
     let config = config::load_config(&root)?;
-    generation::generate_image(&root, &config, &prompt)
+    generation::generate_image(&root, &config, &prompt, &options)
 }
 
 #[tauri::command]
