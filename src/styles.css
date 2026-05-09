@@ -247,3 +247,20 @@ button:disabled {
   margin: 8px 0 0;
   padding-left: 18px;
 }
+
+.image-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.image-preview img {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+.image-preview small {
+  color: #667085;
+  overflow-wrap: anywhere;
+}

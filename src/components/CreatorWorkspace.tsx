@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
 import type { PromptTemplateReference } from "../types/prompt";
@@ -12,11 +12,19 @@ interface PromptTemplateRecord {
   tags: string[];
 }
 
+interface ImageGenerationResult {
+  imagePath: string;
+}
+
 export function CreatorWorkspace() {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
   const [format, setFormat] = useState<ExportFormat>("gpt-image");
   const [templates, setTemplates] = useState<PromptTemplateReference[]>([]);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [imagePath, setImagePath] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
   const exported = useMemo(() => formatPrompt(result, format), [format, result]);
 
@@ -42,6 +50,27 @@ export function CreatorWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [input]);
+
+  async function copyPrompt() {
+    await navigator.clipboard.writeText(exported);
+    setCopyStatus("已复制");
+    window.setTimeout(() => setCopyStatus(null), 1600);
+  }
+
+  async function generateImage() {
+    setIsGenerating(true);
+    setGenerationError(null);
+    try {
+      const generated = await invoke<ImageGenerationResult>("generate_image_preview", {
+        prompt: exported,
+      });
+      setImagePath(generated.imagePath);
+    } catch (err) {
+      setGenerationError(String(err));
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   return (
     <section className="creator-grid">
@@ -89,8 +118,18 @@ export function CreatorWorkspace() {
       <div className="panel">
         <h2>导出 / 预览</h2>
         <textarea readOnly value={exported} />
-        <button>复制提示词</button>
-        <button disabled>生成图片：未配置 API</button>
+        <button onClick={copyPrompt}>复制提示词</button>
+        <button disabled={isGenerating} onClick={generateImage}>
+          {isGenerating ? "生成中..." : "生成图片"}
+        </button>
+        {copyStatus ? <p className="inline-success">{copyStatus}</p> : null}
+        {generationError ? <p className="inline-error">{generationError}</p> : null}
+        {imagePath ? (
+          <div className="image-preview">
+            <img alt="生成预览" src={convertFileSrc(imagePath)} />
+            <small>{imagePath}</small>
+          </div>
+        ) : null}
       </div>
     </section>
   );
