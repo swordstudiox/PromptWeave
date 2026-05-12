@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
@@ -45,6 +45,8 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [operationStatus, setOperationStatus] = useState<string | null>(null);
+  const apiRequestId = useRef(0);
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
   const localExported = useMemo(() => formatPrompt(result, format, settings), [format, result, settings]);
   const exported = apiPrompt || localExported;
@@ -83,6 +85,7 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   useEffect(() => {
     setApiPrompt(null);
     setApiError(null);
+    apiRequestId.current += 1;
   }, [input, format]);
 
   async function copyPrompt() {
@@ -93,8 +96,14 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   }
 
   async function generateImage() {
+    if (!exported.trim()) {
+      setGenerationError("提示词为空，无法生成图片。");
+      return;
+    }
+
     setIsGenerating(true);
     setGenerationError(null);
+    setOperationStatus("正在调用图片生成 API，界面可继续操作。");
     try {
       const generated = await invoke<ImageGenerationResult>("generate_image_preview", {
         prompt: exported,
@@ -105,25 +114,49 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
         },
       });
       setImagePath(generated.imagePath);
-      await saveHistory(generated.imagePath);
+      setOperationStatus("图片生成完成，正在保存历史。");
+      void saveHistory(generated.imagePath)
+        .then(() => setOperationStatus("图片生成完成，历史已保存。"))
+        .catch((err) => setOperationStatus(`图片生成完成，但历史保存失败：${String(err)}`));
     } catch (err) {
       setGenerationError(String(err));
+      setOperationStatus(null);
     } finally {
       setIsGenerating(false);
     }
   }
 
   async function optimizeWithApi() {
+    if (!localExported.trim()) {
+      setApiError("提示词为空，无法调用 API 优化。");
+      return;
+    }
+
+    const requestId = apiRequestId.current + 1;
+    apiRequestId.current = requestId;
     setIsOptimizing(true);
     setApiError(null);
+    setOperationStatus("正在调用提示词优化 API，界面可继续操作。");
     try {
       const optimized = await invoke<PromptOptimizationResult>("optimize_prompt_with_api", {
         localPrompt: localExported,
       });
+      if (requestId !== apiRequestId.current) {
+        setOperationStatus("输入已更新，已忽略上一轮 API 优化结果。");
+        return;
+      }
       setApiPrompt(optimized.prompt);
-      await saveHistory(undefined, optimized.prompt);
+      setOperationStatus("API 优化完成，正在保存历史。");
+      void saveHistory(undefined, optimized.prompt)
+        .then(() => setOperationStatus("API 优化完成，历史已保存。"))
+        .catch((err) => setOperationStatus(`API 优化完成，但历史保存失败：${String(err)}`));
     } catch (err) {
+      if (requestId !== apiRequestId.current) {
+        setOperationStatus("输入已更新，已忽略上一轮 API 优化错误。");
+        return;
+      }
       setApiError(String(err));
+      setOperationStatus(null);
     } finally {
       setIsOptimizing(false);
     }
@@ -294,13 +327,18 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
       <div className="panel">
         <h2>导出 / 预览</h2>
         <textarea readOnly value={exported} />
-        <button disabled={isOptimizing} onClick={optimizeWithApi}>
+        <button disabled={isOptimizing || !localExported.trim()} onClick={optimizeWithApi}>
           {isOptimizing ? "优化中..." : "API 优化"}
         </button>
         <button onClick={copyPrompt}>复制提示词</button>
-        <button disabled={isGenerating} onClick={generateImage}>
+        <button disabled={isGenerating || !exported.trim()} onClick={generateImage}>
           {isGenerating ? "生成中..." : "生成图片"}
         </button>
+        {operationStatus ? (
+          <p className="inline-status" role="status" aria-live="polite">
+            {operationStatus}
+          </p>
+        ) : null}
         {copyStatus ? <p className="inline-success">{copyStatus}</p> : null}
         {generationError ? <p className="inline-error">{generationError}</p> : null}
         {imagePath ? (

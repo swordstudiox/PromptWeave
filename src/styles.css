@@ -208,6 +208,10 @@ button:disabled {
   color: #027a48;
 }
 
+.inline-status {
+  color: #344054;
+}
+
 .warning-list {
   background: #fffaeb;
   border: 1px solid #fedf89;
