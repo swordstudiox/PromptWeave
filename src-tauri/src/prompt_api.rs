@@ -114,7 +114,7 @@ pub fn build_prompt_request(
 
 fn build_user_content(local_prompt: &str) -> String {
     format!(
-        "请将下面的图像生成提示词优化为更专业、可直接用于图像生成的版本。保留中文表达，同时让画面主体、场景、构图、光线、风格和负面约束更清晰。只输出优化后的提示词，不要解释。\n\n{}",
+        "请将下面的图像生成提示词优化为更专业、可直接用于图像生成模型的英文 prompt。让画面主体、场景、构图、光线、风格和负面约束更清晰。只输出优化后的英文 prompt，不要解释，不要包含平台参数。\n\n{}",
         local_prompt.trim()
     )
 }

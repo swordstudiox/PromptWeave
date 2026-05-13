@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
-import type { CreationSettings, PromptTemplateReference } from "../types/prompt";
+import { defaultCreationSettings, type CreationSettings, type PromptTemplateReference } from "../types/prompt";
 import type { HistoryLoadPayload } from "./HistoryPanel";
 
 interface PromptTemplateRecord {
@@ -14,7 +14,8 @@ interface PromptTemplateRecord {
 }
 
 interface ImageGenerationResult {
-  imagePath: string;
+  imagePath?: string;
+  imagePaths?: string[];
 }
 
 interface PromptOptimizationResult {
@@ -24,18 +25,7 @@ interface PromptOptimizationResult {
 export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLoadPayload | null }) {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
   const [format, setFormat] = useState<ExportFormat>("gpt-image");
-  const [settings, setSettings] = useState<CreationSettings>({
-    aspectRatio: "1:1",
-    imageSize: "1024x1024",
-    imageQuality: "medium",
-    imageCount: 1,
-    midjourneyStylize: 100,
-    midjourneyChaos: 0,
-    sdSteps: 28,
-    sdCfg: 6.5,
-    sdSampler: "DPM++ 2M Karras",
-    sdSeed: "",
-  });
+  const [settings, setSettings] = useState<CreationSettings>(defaultCreationSettings);
   const [templates, setTemplates] = useState<PromptTemplateReference[]>([]);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
@@ -43,13 +33,17 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   const [apiPrompt, setApiPrompt] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [imagePath, setImagePath] = useState<string | null>(null);
+  const [imagePaths, setImagePaths] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [operationStatus, setOperationStatus] = useState<string | null>(null);
   const apiRequestId = useRef(0);
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
+  const activeResult = useMemo(
+    () => (apiPrompt ? { ...result, en: apiPrompt } : result),
+    [apiPrompt, result],
+  );
   const localExported = useMemo(() => formatPrompt(result, format, settings), [format, result, settings]);
-  const exported = apiPrompt || localExported;
+  const exported = useMemo(() => formatPrompt(activeResult, format, settings), [activeResult, format, settings]);
 
   useEffect(() => {
     if (!historyPayload) {
@@ -57,6 +51,8 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
     }
     setInput(historyPayload.input);
     setFormat(historyPayload.format);
+    setSettings(historyPayload.settings);
+    setImagePaths(historyPayload.imagePaths);
   }, [historyPayload]);
 
   useEffect(() => {
@@ -113,9 +109,14 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
           n: settings.imageCount,
         },
       });
-      setImagePath(generated.imagePath);
+      const nextImagePaths = generated.imagePaths?.length
+        ? generated.imagePaths
+        : generated.imagePath
+          ? [generated.imagePath]
+          : [];
+      setImagePaths(nextImagePaths);
       setOperationStatus("图片生成完成，正在保存历史。");
-      void saveHistory(generated.imagePath)
+      void saveHistory(nextImagePaths)
         .then(() => setOperationStatus("图片生成完成，历史已保存。"))
         .catch((err) => setOperationStatus(`图片生成完成，但历史保存失败：${String(err)}`));
     } catch (err) {
@@ -139,7 +140,7 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
     setOperationStatus("正在调用提示词优化 API，界面可继续操作。");
     try {
       const optimized = await invoke<PromptOptimizationResult>("optimize_prompt_with_api", {
-        localPrompt: localExported,
+        localPrompt: result.en,
       });
       if (requestId !== apiRequestId.current) {
         setOperationStatus("输入已更新，已忽略上一轮 API 优化结果。");
@@ -162,7 +163,7 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
     }
   }
 
-  async function saveHistory(imagePath?: string, promptOverride?: string) {
+  async function saveHistory(nextImagePaths: string[] = imagePaths, promptOverride?: string) {
     const now = Date.now().toString();
     await invoke("save_generation_history", {
       draft: {
@@ -173,7 +174,8 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
         exportFormat: format,
         matchedTemplatesJson: JSON.stringify(result.matchedTemplateTitles),
         settingsJson: JSON.stringify(settings),
-        imagePath,
+        imagePath: nextImagePaths[0],
+        imagePathsJson: JSON.stringify(nextImagePaths),
         createdAt: now,
       },
     });
@@ -341,10 +343,14 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
         ) : null}
         {copyStatus ? <p className="inline-success">{copyStatus}</p> : null}
         {generationError ? <p className="inline-error">{generationError}</p> : null}
-        {imagePath ? (
+        {imagePaths.length ? (
           <div className="image-preview">
-            <img alt="生成预览" src={convertFileSrc(imagePath)} />
-            <small>{imagePath}</small>
+            {imagePaths.map((imagePath) => (
+              <figure key={imagePath}>
+                <img alt="生成预览" src={convertFileSrc(imagePath)} />
+                <figcaption>{imagePath}</figcaption>
+              </figure>
+            ))}
           </div>
         ) : null}
       </div>

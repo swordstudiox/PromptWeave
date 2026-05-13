@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { ExportFormat } from "../lib/exportFormats";
+import { defaultCreationSettings, type CreationSettings } from "../types/prompt";
 
 export interface HistoryLoadPayload {
   input: string;
   format: ExportFormat;
+  settings: CreationSettings;
+  imagePaths: string[];
 }
 
 interface GenerationHistoryRecord {
@@ -16,7 +19,20 @@ interface GenerationHistoryRecord {
   matchedTemplates: string[];
   settingsJson: string;
   imagePath?: string;
+  imagePaths: string[];
   createdAt: string;
+}
+
+function parseHistorySettings(settingsJson: string): CreationSettings {
+  try {
+    return { ...defaultCreationSettings, ...JSON.parse(settingsJson) };
+  } catch {
+    return defaultCreationSettings;
+  }
+}
+
+function historyImagePaths(record: GenerationHistoryRecord): string[] {
+  return record.imagePaths?.length ? record.imagePaths : record.imagePath ? [record.imagePath] : [];
 }
 
 export function HistoryPanel({ onLoad }: { onLoad: (payload: HistoryLoadPayload) => void }) {
@@ -60,13 +76,28 @@ export function HistoryPanel({ onLoad }: { onLoad: (payload: HistoryLoadPayload)
             </span>
             <p>{record.promptZh || record.promptEn}</p>
             {record.matchedTemplates.length ? <small>参考模板：{record.matchedTemplates.join(", ")}</small> : null}
-            {record.imagePath ? (
+            {historyImagePaths(record).length ? (
               <div className="history-image">
-                <img alt="历史生成图" src={convertFileSrc(record.imagePath)} />
-                <small>{record.imagePath}</small>
+                {historyImagePaths(record).map((imagePath) => (
+                  <figure key={imagePath}>
+                    <img alt="历史生成图" src={convertFileSrc(imagePath)} />
+                    <figcaption>{imagePath}</figcaption>
+                  </figure>
+                ))}
               </div>
             ) : null}
-            <button onClick={() => onLoad({ input: record.userInput, format: record.exportFormat })}>载入到创作页</button>
+            <button
+              onClick={() =>
+                onLoad({
+                  input: record.userInput,
+                  format: record.exportFormat,
+                  settings: parseHistorySettings(record.settingsJson),
+                  imagePaths: historyImagePaths(record),
+                })
+              }
+            >
+              载入到创作页
+            </button>
           </article>
         ))}
       </div>

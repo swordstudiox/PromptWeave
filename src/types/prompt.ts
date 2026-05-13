@@ -37,3 +37,16 @@ export interface CreationSettings {
   sdSampler: string;
   sdSeed: string;
 }
+
+export const defaultCreationSettings: CreationSettings = {
+  aspectRatio: "1:1",
+  imageSize: "1024x1024",
+  imageQuality: "medium",
+  imageCount: 1,
+  midjourneyStylize: 100,
+  midjourneyChaos: 0,
+  sdSteps: 28,
+  sdCfg: 6.5,
+  sdSampler: "DPM++ 2M Karras",
+  sdSeed: "",
+};

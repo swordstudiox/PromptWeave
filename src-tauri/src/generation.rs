@@ -17,7 +17,8 @@ pub struct ImageRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageGenerationResult {
-    pub image_path: String,
+    pub image_path: Option<String>,
+    pub image_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,25 +63,32 @@ pub fn generate_image(
         .into_body()
         .read_json()
         .map_err(|err| format!("图片生成 API 响应解析失败: {err}"))?;
-    let first = parsed.data.first().ok_or_else(|| "图片生成 API 没有返回图片。".to_string())?;
-    let bytes = if let Some(encoded) = &first.b64_json {
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|err| format!("图片 base64 解码失败: {err}"))?
-    } else if let Some(url) = &first.url {
-        ureq::get(url)
-            .call()
-            .map_err(|err| format!("图片 URL 下载失败: {err}"))?
-            .into_body()
-            .read_to_vec()
-            .map_err(|err| format!("图片内容读取失败: {err}"))?
-    } else {
-        return Err("图片生成 API 响应缺少 b64_json 或 url。".to_string());
-    };
+    if parsed.data.is_empty() {
+        return Err("图片生成 API 没有返回图片。".to_string());
+    }
 
-    let path = save_image_bytes(workspace_root, &bytes)?;
+    let mut image_paths = Vec::new();
+    for image in parsed.data {
+        let bytes = if let Some(encoded) = &image.b64_json {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|err| format!("图片 base64 解码失败: {err}"))?
+        } else if let Some(url) = &image.url {
+            ureq::get(url)
+                .call()
+                .map_err(|err| format!("图片 URL 下载失败: {err}"))?
+                .into_body()
+                .read_to_vec()
+                .map_err(|err| format!("图片内容读取失败: {err}"))?
+        } else {
+            return Err("图片生成 API 响应缺少 b64_json 或 url。".to_string());
+        };
+        image_paths.push(save_image_bytes(workspace_root, &bytes)?.display().to_string());
+    }
+
     Ok(ImageGenerationResult {
-        image_path: path.display().to_string(),
+        image_path: image_paths.first().cloned(),
+        image_paths,
     })
 }
 
@@ -126,9 +134,15 @@ fn save_image_bytes(workspace_root: &Path, bytes: &[u8]) -> Result<PathBuf, Stri
     let image_dir = Path::new(&workspace.data_dir).join("history").join("images");
     fs::create_dir_all(&image_dir)
         .map_err(|err| format!("图片历史目录创建失败 {}: {err}", image_dir.display()))?;
-    let path = image_dir.join(format!("image-{}.png", current_timestamp()));
+    let path = image_dir.join(format!("image-{}-{}.png", current_timestamp(), random_suffix()));
     fs::write(&path, bytes).map_err(|err| format!("图片保存失败 {}: {err}", path.display()))?;
     Ok(path)
+}
+
+fn random_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
 }
 
 fn current_timestamp() -> String {

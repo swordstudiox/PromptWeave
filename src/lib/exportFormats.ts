@@ -1,21 +1,8 @@
-import type { CreationSettings, OptimizedPrompt } from "../types/prompt";
+import { defaultCreationSettings, type CreationSettings, type OptimizedPrompt } from "../types/prompt";
 
 export type ExportFormat = "gpt-image" | "midjourney" | "stable-diffusion";
 
-const defaultSettings: CreationSettings = {
-  aspectRatio: "1:1",
-  imageSize: "1024x1024",
-  imageQuality: "medium",
-  imageCount: 1,
-  midjourneyStylize: 100,
-  midjourneyChaos: 0,
-  sdSteps: 28,
-  sdCfg: 6.5,
-  sdSampler: "DPM++ 2M Karras",
-  sdSeed: "",
-};
-
-export function formatPrompt(prompt: OptimizedPrompt, format: ExportFormat, settings: CreationSettings = defaultSettings): string {
+export function formatPrompt(prompt: OptimizedPrompt, format: ExportFormat, settings: CreationSettings = defaultCreationSettings): string {
   if (format === "midjourney") {
     return `${prompt.en} --ar ${settings.aspectRatio} --style raw --s ${settings.midjourneyStylize} --chaos ${settings.midjourneyChaos} --no watermark, malformed hands, distorted text`;
   }

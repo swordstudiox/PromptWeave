@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::imports::PromptTemplateDraft;
@@ -69,7 +70,14 @@ pub struct GenerationHistoryDraft {
     pub matched_templates_json: String,
     pub settings_json: String,
     pub image_path: Option<String>,
+    pub image_paths_json: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateCleanupResult {
+    pub deleted_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +91,7 @@ pub struct GenerationHistoryRecord {
     pub matched_templates: Vec<String>,
     pub settings_json: String,
     pub image_path: Option<String>,
+    pub image_paths: Vec<String>,
     pub created_at: String,
 }
 
@@ -151,6 +160,7 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
               matched_templates_json TEXT NOT NULL DEFAULT '[]',
               settings_json TEXT NOT NULL DEFAULT '{}',
               image_path TEXT,
+              image_paths_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL
             );
 
@@ -180,6 +190,12 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
         "generation_history",
         "settings_json",
         "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column(
+        &connection,
+        "generation_history",
+        "image_paths_json",
+        "TEXT NOT NULL DEFAULT '[]'",
     )?;
     ensure_column(
         &connection,
@@ -721,6 +737,40 @@ mod tests {
     }
 
     #[test]
+    fn deletes_prompt_template_from_database_and_search_index() {
+        let database_path = test_database_path("delete");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        delete_prompt_template(&database_path, "template-1").expect("template should delete");
+
+        let listed = list_prompt_templates(&database_path, 20).expect("templates should list");
+        let searched = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+        assert!(listed.is_empty());
+        assert!(searched.is_empty());
+    }
+
+    #[test]
+    fn cleanup_duplicate_prompt_templates_keeps_one_visible_copy() {
+        let database_path = test_database_path("dedupe");
+        bootstrap(&database_path).expect("database should bootstrap");
+        let mut second = draft();
+        second.id = "template-2".to_string();
+        second.content_hash = "template-2".to_string();
+        second.title = "Snow Portrait Copy".to_string();
+        second.imported_at = "2".to_string();
+        second.prompt_original = "A cinematic portrait in a snowy mountain scene.".to_string();
+        insert_prompt_templates(&database_path, &[draft(), second]).expect("templates should insert");
+
+        let result = cleanup_duplicate_prompt_templates(&database_path).expect("duplicates should clean up");
+        let templates = list_prompt_templates(&database_path, 20).expect("templates should list");
+
+        assert_eq!(result.deleted_count, 1);
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].title, "Snow Portrait Copy");
+    }
+
+    #[test]
     fn library_source_upsert_and_sync_success_are_listed() {
         let database_path = test_database_path("library-source-success");
         bootstrap(&database_path).expect("database should bootstrap");
@@ -822,6 +872,7 @@ mod tests {
             matched_templates_json: "[\"Snow Portrait\"]".to_string(),
             settings_json: "{\"aspectRatio\":\"1:1\"}".to_string(),
             image_path: Some("F:/image.png".to_string()),
+            image_paths_json: "[\"F:/image.png\",\"F:/image-2.png\"]".to_string(),
             created_at: "2".to_string(),
         };
 
@@ -831,7 +882,94 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].user_input, "红色斗篷女孩");
         assert_eq!(history[0].image_path.as_deref(), Some("F:/image.png"));
+        assert_eq!(history[0].image_paths, vec!["F:/image.png", "F:/image-2.png"]);
     }
+}
+
+pub fn delete_prompt_template(database_path: &Path, id: &str) -> Result<(), String> {
+    let connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let changed = connection
+        .execute(
+            r#"
+            DELETE FROM prompt_templates
+            WHERE id = ?1
+            "#,
+            params![id],
+        )
+        .map_err(|err| format!("Failed to delete prompt template '{id}': {err}"))?;
+    if changed == 0 {
+        return Err(format!("Prompt template '{id}' was not found"));
+    }
+    Ok(())
+}
+
+pub fn cleanup_duplicate_prompt_templates(database_path: &Path) -> Result<DuplicateCleanupResult, String> {
+    let mut connection = Connection::open(database_path)
+        .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
+    let duplicate_ids = {
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT id, prompt_original
+                FROM prompt_templates
+                WHERE is_archived = 0
+                ORDER BY is_favorite DESC, imported_at DESC, title ASC
+                "#,
+            )
+            .map_err(|err| format!("Failed to prepare duplicate cleanup query: {err}"))?;
+        let mut rows = statement
+            .query([])
+            .map_err(|err| format!("Failed to query duplicate templates: {err}"))?;
+        let mut seen: HashMap<String, String> = HashMap::new();
+        let mut duplicate_ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(|err| format!("Failed to read duplicate template row: {err}"))? {
+            let id: String = row.get(0).map_err(|err| format!("Failed to read template id: {err}"))?;
+            let prompt: String = row.get(1).map_err(|err| format!("Failed to read template prompt: {err}"))?;
+            let key = normalize_prompt_for_dedupe(&prompt);
+            if key.is_empty() {
+                continue;
+            }
+            if seen.insert(key, id.clone()).is_some() {
+                duplicate_ids.push(id);
+            }
+        }
+        duplicate_ids
+    };
+
+    if duplicate_ids.is_empty() {
+        return Ok(DuplicateCleanupResult { deleted_count: 0 });
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|err| format!("Failed to start duplicate cleanup transaction: {err}"))?;
+    let mut deleted_count = 0usize;
+    {
+        let mut statement = transaction
+            .prepare("DELETE FROM prompt_templates WHERE id = ?1")
+            .map_err(|err| format!("Failed to prepare duplicate delete statement: {err}"))?;
+        for id in duplicate_ids {
+            deleted_count += statement
+                .execute(params![id])
+                .map_err(|err| format!("Failed to delete duplicate template: {err}"))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|err| format!("Failed to commit duplicate cleanup transaction: {err}"))?;
+
+    Ok(DuplicateCleanupResult { deleted_count })
+}
+
+fn normalize_prompt_for_dedupe(prompt: &str) -> String {
+    prompt
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDraft) -> Result<(), String> {
@@ -849,8 +987,9 @@ pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDr
               matched_templates_json,
               settings_json,
               image_path,
+              image_paths_json,
               created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 &draft.id,
@@ -861,6 +1000,7 @@ pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDr
                 &draft.matched_templates_json,
                 &draft.settings_json,
                 &draft.image_path,
+                &draft.image_paths_json,
                 &draft.created_at,
             ],
         )
@@ -875,7 +1015,7 @@ pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec
         .prepare(
             r#"
             SELECT id, user_input, prompt_zh, prompt_en, export_format,
-                   matched_templates_json, settings_json, image_path, created_at
+                   matched_templates_json, settings_json, image_path, image_paths_json, created_at
             FROM generation_history
             ORDER BY created_at DESC
             LIMIT ?1
@@ -891,6 +1031,16 @@ pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec
         let matched_templates_json: String = row
             .get(5)
             .map_err(|err| format!("Failed to read matched templates JSON: {err}"))?;
+        let image_path: Option<String> = row.get(7).map_err(|err| format!("Failed to read image path: {err}"))?;
+        let image_paths_json: String = row
+            .get(8)
+            .map_err(|err| format!("Failed to read image paths JSON: {err}"))?;
+        let mut image_paths: Vec<String> = serde_json::from_str(&image_paths_json).unwrap_or_default();
+        if image_paths.is_empty() {
+            if let Some(path) = &image_path {
+                image_paths.push(path.clone());
+            }
+        }
         history.push(GenerationHistoryRecord {
             id: row.get(0).map_err(|err| format!("Failed to read history id: {err}"))?,
             user_input: row.get(1).map_err(|err| format!("Failed to read user input: {err}"))?,
@@ -899,8 +1049,9 @@ pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec
             export_format: row.get(4).map_err(|err| format!("Failed to read export format: {err}"))?,
             matched_templates: serde_json::from_str(&matched_templates_json).unwrap_or_default(),
             settings_json: row.get(6).map_err(|err| format!("Failed to read settings JSON: {err}"))?,
-            image_path: row.get(7).map_err(|err| format!("Failed to read image path: {err}"))?,
-            created_at: row.get(8).map_err(|err| format!("Failed to read created_at: {err}"))?,
+            image_path,
+            image_paths,
+            created_at: row.get(9).map_err(|err| format!("Failed to read created_at: {err}"))?,
         });
     }
 

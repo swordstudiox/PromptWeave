@@ -21,4 +21,15 @@ describe("optimizePromptLocally", () => {
     expect(result.structured.negativePrompt).toContain("watermark");
     expect(result.zh).toContain("参考模板");
   });
+
+  it("renders common Chinese concepts as an English export prompt", () => {
+    const result = optimizePromptLocally("一个穿红色斗篷的女孩站在雪山上，电影感");
+
+    expect(result.en).toContain("girl");
+    expect(result.en).toContain("wearing a red cloak");
+    expect(result.en).toContain("snowy mountain");
+    expect(result.en).toContain("cinematic");
+    expect(result.en).not.toContain("雪山");
+    expect(result.structured.negativePrompt).toContain("low resolution");
+  });
 });

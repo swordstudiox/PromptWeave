@@ -27,15 +27,21 @@ interface TemplateEditDraft {
   tagsText: string;
 }
 
+interface DuplicateCleanupResult {
+  deletedCount: number;
+}
+
 export function TemplateLibrary() {
   const [query, setQuery] = useState("");
   const [templates, setTemplates] = useState<PromptTemplateRecord[]>([]);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<TemplateEditDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,6 +88,12 @@ export function TemplateLibrary() {
   function cancelEditing() {
     setEditingId(null);
     setEditDraft(null);
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
   }
 
   async function saveEditing() {
@@ -141,8 +153,8 @@ export function TemplateLibrary() {
     }
   }
 
-  async function archiveTemplate(template: PromptTemplateRecord) {
-    const confirmed = window.confirm(`归档模板“${template.title}”？归档后它不会出现在模板库和语义检索结果中。`);
+  async function deleteTemplate(template: PromptTemplateRecord) {
+    const confirmed = window.confirm(`永久删除模板“${template.title}”？删除后不能从模板库恢复。`);
     if (!confirmed) {
       return;
     }
@@ -150,16 +162,35 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      await invoke("archive_prompt_template", { id: template.id });
+      await invoke("delete_prompt_template", { id: template.id });
       setTemplates((current) => current.filter((item) => item.id !== template.id));
       if (editingId === template.id) {
         cancelEditing();
       }
-      setStatus("模板已归档。");
+      setStatus("模板已删除。");
     } catch (err) {
       setError(String(err));
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function cleanupDuplicates() {
+    const confirmed = window.confirm("清理重复模板会永久删除重复记录，并保留收藏或较新的那一条。继续吗？");
+    if (!confirmed) {
+      return;
+    }
+    setIsCleaningDuplicates(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const result = await invoke<DuplicateCleanupResult>("cleanup_duplicate_prompt_templates");
+      setStatus(result.deletedCount ? `已删除 ${result.deletedCount} 条重复模板。` : "没有发现重复模板。");
+      await loadTemplates(query);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsCleaningDuplicates(false);
     }
   }
 
@@ -171,14 +202,19 @@ export function TemplateLibrary() {
     <section className="panel">
       <div className="panel-heading">
         <h2>模板库</h2>
-        <label className="checkbox-row compact-checkbox">
-          <input
-            type="checkbox"
-            checked={showFavoritesOnly}
-            onChange={(event) => setShowFavoritesOnly(event.target.checked)}
-          />
-          只看收藏
-        </label>
+        <div className="template-toolbar">
+          <label className="checkbox-row compact-checkbox">
+            <input
+              type="checkbox"
+              checked={showFavoritesOnly}
+              onChange={(event) => setShowFavoritesOnly(event.target.checked)}
+            />
+            只看收藏
+          </label>
+          <button className="secondary-button" disabled={isCleaningDuplicates || isLoading} onClick={() => void cleanupDuplicates()}>
+            {isCleaningDuplicates ? "清理中..." : "清理重复"}
+          </button>
+        </div>
       </div>
       <div className="search-row">
         <input
@@ -200,84 +236,220 @@ export function TemplateLibrary() {
       {!templates.length && !isLoading ? <p>本地模板库为空。先从“导入”页面粘贴 GitHub 链接导入参考库。</p> : null}
       {templates.length && !visibleTemplates.length && showFavoritesOnly ? <p>暂无收藏模板。</p> : null}
       <div className="template-list">
-        {visibleTemplates.map((template) => (
-          <article key={template.id} className="template-row">
-            {editingId === template.id && editDraft ? (
-              <div className="template-edit-form">
-                <input
-                  aria-label="模板标题"
-                  value={editDraft.title}
-                  onChange={(event) => updateDraft("title", event.target.value)}
-                />
-                <div className="template-edit-grid">
+        {visibleTemplates.map((template) => {
+          const isExpanded = expandedIds.includes(template.id);
+          const promptText = cleanPromptText(template.promptOriginal);
+          const sourceLabel = formatSourceLabel(template.sourceUrl);
+          const title = cleanTemplateTitle(template.title);
+          const visibleTags = template.tags.slice(0, 6);
+          const hiddenTagCount = Math.max(0, template.tags.length - visibleTags.length);
+          const hasLongPrompt = promptText.length > 420 || promptText.includes("\n");
+
+          return (
+            <article key={template.id} className="template-card">
+              {editingId === template.id && editDraft ? (
+                <div className="template-edit-form">
                   <input
-                    aria-label="分类"
-                    placeholder="分类"
-                    value={editDraft.category}
-                    onChange={(event) => updateDraft("category", event.target.value)}
+                    aria-label="模板标题"
+                    value={editDraft.title}
+                    onChange={(event) => updateDraft("title", event.target.value)}
+                  />
+                  <div className="template-edit-grid">
+                    <input
+                      aria-label="分类"
+                      placeholder="分类"
+                      value={editDraft.category}
+                      onChange={(event) => updateDraft("category", event.target.value)}
+                    />
+                    <input
+                      aria-label="比例"
+                      placeholder="比例，例如 1:1"
+                      value={editDraft.aspectRatio}
+                      onChange={(event) => updateDraft("aspectRatio", event.target.value)}
+                    />
+                  </div>
+                  <textarea
+                    aria-label="提示词"
+                    value={editDraft.promptOriginal}
+                    onChange={(event) => updateDraft("promptOriginal", event.target.value)}
+                  />
+                  <textarea
+                    aria-label="负面提示词"
+                    placeholder="Negative prompt，可留空"
+                    value={editDraft.negativePrompt}
+                    onChange={(event) => updateDraft("negativePrompt", event.target.value)}
                   />
                   <input
-                    aria-label="比例"
-                    placeholder="比例，例如 1:1"
-                    value={editDraft.aspectRatio}
-                    onChange={(event) => updateDraft("aspectRatio", event.target.value)}
+                    aria-label="标签"
+                    placeholder="标签，用逗号分隔"
+                    value={editDraft.tagsText}
+                    onChange={(event) => updateDraft("tagsText", event.target.value)}
                   />
-                </div>
-                <textarea
-                  aria-label="提示词"
-                  value={editDraft.promptOriginal}
-                  onChange={(event) => updateDraft("promptOriginal", event.target.value)}
-                />
-                <textarea
-                  aria-label="负面提示词"
-                  placeholder="Negative prompt，可留空"
-                  value={editDraft.negativePrompt}
-                  onChange={(event) => updateDraft("negativePrompt", event.target.value)}
-                />
-                <input
-                  aria-label="标签"
-                  placeholder="标签，用逗号分隔"
-                  value={editDraft.tagsText}
-                  onChange={(event) => updateDraft("tagsText", event.target.value)}
-                />
-                <div className="template-actions">
-                  <button disabled={busyId === template.id} onClick={saveEditing}>
-                    {busyId === template.id ? "保存中..." : "保存"}
-                  </button>
-                  <button className="secondary-button" disabled={busyId === template.id} onClick={cancelEditing}>
-                    取消
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="template-title-row">
-                  <strong>{template.isFavorite ? "★ " : ""}{template.title}</strong>
                   <div className="template-actions">
-                    <button className="secondary-button" disabled={busyId === template.id} onClick={() => void toggleFavorite(template)}>
-                      {template.isFavorite ? "取消收藏" : "收藏"}
+                    <button disabled={busyId === template.id} onClick={saveEditing}>
+                      {busyId === template.id ? "保存中..." : "保存"}
                     </button>
-                    <button className="secondary-button" disabled={busyId === template.id} onClick={() => startEditing(template)}>
-                      编辑
-                    </button>
-                    <button className="danger-button" disabled={busyId === template.id} onClick={() => void archiveTemplate(template)}>
-                      归档
+                    <button className="secondary-button" disabled={busyId === template.id} onClick={cancelEditing}>
+                      取消
                     </button>
                   </div>
                 </div>
-                <span>
-                  {template.category || "未分类"} · {template.modelHint} · {template.language}
-                </span>
-                <p>{template.promptOriginal}</p>
-                <small>{template.sourceUrl}</small>
-                {template.negativePrompt ? <small>Negative: {template.negativePrompt}</small> : null}
-                {template.aspectRatio ? <small>比例：{template.aspectRatio}</small> : null}
-                {template.tags.length ? <small>标签：{template.tags.join(", ")}</small> : null}
-              </>
-            )}
-          </article>
-        ))}
+              ) : (
+                <>
+                  <div className="template-card-top">
+                    <div className="template-summary">
+                      <h3>{template.isFavorite ? "★ " : ""}{title}</h3>
+                      <div className="template-meta">
+                        <span>{template.category || "未分类"}</span>
+                        <span>{template.modelHint}</span>
+                        <span>{template.language}</span>
+                        {template.aspectRatio ? <span>{template.aspectRatio}</span> : null}
+                      </div>
+                    </div>
+                    <div className="template-actions compact-actions">
+                      <button className="secondary-button" disabled={busyId === template.id} onClick={() => void toggleFavorite(template)}>
+                        {template.isFavorite ? "已收藏" : "收藏"}
+                      </button>
+                      <button className="secondary-button" disabled={busyId === template.id} onClick={() => startEditing(template)}>
+                        编辑
+                      </button>
+                      <button className="danger-button" disabled={busyId === template.id} onClick={() => void deleteTemplate(template)}>
+                        删除
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className={isExpanded ? "template-prompt expanded" : "template-prompt"}>
+                    {promptText || "暂无提示词内容"}
+                  </p>
+
+                  <div className="template-footer">
+                    <div className="template-tags">
+                      {visibleTags.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                      {hiddenTagCount ? <span>+{hiddenTagCount}</span> : null}
+                    </div>
+                    <div className="template-footer-actions">
+                      {hasLongPrompt ? (
+                        <button className="text-button" onClick={() => toggleExpanded(template.id)}>
+                          {isExpanded ? "收起" : "展开"}
+                        </button>
+                      ) : null}
+                      <small title={template.sourceUrl}>{sourceLabel}</small>
+                    </div>
+                  </div>
+                  {template.negativePrompt ? <small className="template-negative">Negative: {cleanPromptText(template.negativePrompt)}</small> : null}
+                </>
+              )}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+function cleanTemplateTitle(title: string): string {
+  return normalizeWhitespace(
+    title
+      .replace(/^\d+[\s.)-]*/, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/<!--|-->/g, ""),
+  ) || "Imported Prompt";
+}
+
+function cleanPromptText(prompt: string): string {
+  const text = prompt.trim();
+  if (!text) {
+    return "";
+  }
+
+  const jsonSummary = summarizeJsonPrompt(text);
+  if (jsonSummary) {
+    return jsonSummary;
+  }
+
+  return normalizeWhitespace(
+    text
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<img\b[^>]*>/gi, "")
+      .replace(/\|:?-+:?\|/g, " ")
+      .replace(/\*\*Prompt:\*\*/gi, "Prompt:")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/!\[[^\]]*]\([^)]+\)/g, ""),
+  );
+}
+
+function summarizeJsonPrompt(text: string): string | null {
+  if (!text.startsWith("{") && !text.startsWith("[")) {
+    return null;
+  }
+
+  try {
+    const value = JSON.parse(text);
+    return summarizeJsonValue(value);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeJsonValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.slice(0, 4).map(summarizeJsonValue).filter(Boolean).join(" · ");
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const parts = [
+      stringValue(record.type),
+      stringValue(record.title),
+      stringValue(record.name),
+      stringValue(record.prompt),
+      summarizeNamedObject("brand", record.brand),
+      summarizeNamedObject("subject", record.subject),
+      summarizeSectionTitles(record.sections),
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+
+  return stringValue(value);
+}
+
+function summarizeNamedObject(label: string, value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const record = value as Record<string, unknown>;
+  const name = stringValue(record.name) || stringValue(record.description);
+  return name ? `${label}: ${name}` : "";
+}
+
+function summarizeSectionTitles(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  const titles = value
+    .map((item) => (item && typeof item === "object" ? stringValue((item as Record<string, unknown>).title) : ""))
+    .filter(Boolean)
+    .slice(0, 6);
+  return titles.length ? `sections: ${titles.join(" / ")}` : "";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? normalizeWhitespace(value) : "";
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function formatSourceLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const fileName = parsed.pathname.split("/").filter(Boolean).at(-1) || parsed.hostname;
+    return `${parsed.hostname} · ${fileName}`;
+  } catch {
+    return url;
+  }
 }

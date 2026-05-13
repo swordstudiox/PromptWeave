@@ -122,6 +122,18 @@ select {
   margin: 0;
 }
 
+.template-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.template-toolbar button {
+  margin-right: 0;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d8dee8;
@@ -241,7 +253,8 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.template-row {
+.template-row,
+.template-card {
   border-top: 1px solid #eef2f6;
   display: grid;
   gap: 5px;
@@ -323,8 +336,136 @@ button:disabled {
 
 .template-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   margin-top: 16px;
+}
+
+.template-card {
+  background: #fbfcff;
+  border: 1px solid #e5eaf2;
+  border-radius: 8px;
+  gap: 10px;
+  padding: 14px;
+}
+
+.template-card-top {
+  align-items: flex-start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.template-summary {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.template-summary h3 {
+  color: #101828;
+  font-size: 17px;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.template-meta,
+.template-tags {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.template-meta span,
+.template-tags span {
+  background: #eef4ff;
+  border: 1px solid #d7e3ff;
+  border-radius: 999px;
+  color: #315b9d;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.template-tags span {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.template-prompt {
+  color: #334155;
+  display: -webkit-box;
+  font-size: 14px;
+  line-height: 1.65;
+  margin: 0;
+  max-width: 1120px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.template-prompt.expanded {
+  background: #ffffff;
+  border: 1px solid #e5eaf2;
+  border-radius: 8px;
+  display: block;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+
+.template-footer {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.template-footer-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.template-footer-actions small {
+  color: #667085;
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-negative {
+  background: #fff7ed;
+  border-radius: 6px;
+  color: #9a3412;
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+}
+
+.compact-actions {
+  flex-wrap: nowrap;
+}
+
+.compact-actions button,
+.text-button {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.text-button {
+  background: transparent;
+  color: #175cd3;
+  margin-right: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .matched-list {
@@ -335,7 +476,15 @@ button:disabled {
 .image-preview {
   display: grid;
   gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   margin-top: 16px;
+}
+
+.image-preview figure,
+.history-image figure {
+  display: grid;
+  gap: 6px;
+  margin: 0;
 }
 
 .image-preview img {
@@ -344,15 +493,17 @@ button:disabled {
   max-width: 100%;
 }
 
-.image-preview small {
+.image-preview figcaption {
   color: #667085;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
 .history-image {
   display: grid;
   gap: 6px;
-  max-width: 220px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  max-width: 520px;
 }
 
 .history-image img {
@@ -361,8 +512,72 @@ button:disabled {
   max-width: 100%;
 }
 
+.history-image figcaption {
+  color: #667085;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .control-grid {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1120px) {
+  .creator-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-bottom: 1px solid #d8dee8;
+    border-right: 0;
+  }
+
+  .sidebar nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+    width: auto;
+  }
+
+  .control-grid,
+  .template-edit-grid,
+  .search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .template-card-top,
+  .template-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-actions {
+    justify-content: flex-start;
+  }
+
+  .template-footer-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .template-footer-actions small {
+    max-width: 100%;
+    white-space: normal;
+  }
 }

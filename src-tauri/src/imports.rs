@@ -192,7 +192,7 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
 
         if line.starts_with("```") {
             let fence_lang = line.trim_start_matches('`').trim().to_ascii_lowercase();
-            if fence_lang.contains("prompt") || fence_lang.is_empty() {
+            if fence_lang.contains("prompt") {
                 in_prompt_fence = true;
                 fence_buffer.clear();
             }
@@ -420,10 +420,12 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
     let repo = parse_github_repo(url)?;
     let metadata_url = format!("https://api.github.com/repos/{}/{}", repo.owner, repo.name);
     let metadata: Value = http_get_json(&metadata_url)?;
-    let branch = metadata
+    let default_branch = metadata
         .get("default_branch")
         .and_then(Value::as_str)
         .unwrap_or("main");
+    let selection = parse_github_tree_selection(url, default_branch)?;
+    let branch = selection.branch.as_deref().unwrap_or(default_branch);
 
     let tree_url = format!(
         "https://api.github.com/repos/{}/{}/git/trees/{}?recursive=1",
@@ -438,6 +440,11 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
                 continue;
             };
             let lower = path.to_ascii_lowercase();
+            if let Some(prefix) = &selection.path_prefix {
+                if path != prefix && !path.starts_with(&format!("{prefix}/")) {
+                    continue;
+                }
+            }
             if !is_supported_prompt_file(&lower) {
                 continue;
             }
@@ -456,9 +463,14 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
     }
 
     if documents.is_empty() {
+        let readme_path = selection
+            .path_prefix
+            .as_ref()
+            .map(|prefix| format!("{prefix}/README.md"))
+            .unwrap_or_else(|| "README.md".to_string());
         let raw_url = format!(
-            "https://raw.githubusercontent.com/{}/{}/{}/README.md",
-            repo.owner, repo.name, branch
+            "https://raw.githubusercontent.com/{}/{}/{}/{}",
+            repo.owner, repo.name, branch, readme_path
         );
         documents.push(ImportDocument {
             url: raw_url.clone(),
@@ -475,6 +487,12 @@ struct GitHubRepo {
     name: String,
 }
 
+#[derive(Debug, Default)]
+struct GitHubTreeSelection {
+    branch: Option<String>,
+    path_prefix: Option<String>,
+}
+
 fn parse_github_repo(url: &str) -> Result<GitHubRepo, String> {
     let without_query = url.split('?').next().unwrap_or(url);
     let marker = "github.com/";
@@ -489,6 +507,50 @@ fn parse_github_repo(url: &str) -> Result<GitHubRepo, String> {
         owner: owner.to_string(),
         name: name.trim_end_matches(".git").to_string(),
     })
+}
+
+fn parse_github_tree_selection(url: &str, default_branch: &str) -> Result<GitHubTreeSelection, String> {
+    let Some((_, tree_rest)) = url.split_once("/tree/") else {
+        return Ok(GitHubTreeSelection::default());
+    };
+    let rest = tree_rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(tree_rest)
+        .trim_matches('/');
+    if rest.is_empty() {
+        return Ok(GitHubTreeSelection::default());
+    }
+
+    if rest == default_branch {
+        return Ok(GitHubTreeSelection {
+            branch: Some(default_branch.to_string()),
+            path_prefix: None,
+        });
+    }
+
+    let default_branch_prefix = format!("{default_branch}/");
+    if let Some(path_prefix) = rest.strip_prefix(&default_branch_prefix) {
+        return Ok(GitHubTreeSelection {
+            branch: Some(default_branch.to_string()),
+            path_prefix: clean_tree_path(path_prefix),
+        });
+    }
+
+    let mut parts = rest.splitn(2, '/');
+    let branch = parts
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "GitHub tree branch missing.".to_string())?;
+    Ok(GitHubTreeSelection {
+        branch: Some(branch.to_string()),
+        path_prefix: parts.next().and_then(clean_tree_path),
+    })
+}
+
+fn clean_tree_path(path: &str) -> Option<String> {
+    let normalized = path.trim_matches('/');
+    (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
 fn github_blob_to_raw(url: &str) -> Result<String, String> {
@@ -658,6 +720,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_github_tree_subdirectory_on_default_branch() {
+        let selection = parse_github_tree_selection(
+            "https://github.com/example/repo/tree/main/examples/prompts",
+            "main",
+        )
+        .expect("tree selection should parse");
+
+        assert_eq!(selection.branch.as_deref(), Some("main"));
+        assert_eq!(selection.path_prefix.as_deref(), Some("examples/prompts"));
+    }
+
+    #[test]
+    fn parses_github_tree_subdirectory_on_custom_branch() {
+        let selection = parse_github_tree_selection(
+            "https://github.com/example/repo/tree/dev/prompts",
+            "main",
+        )
+        .expect("tree selection should parse");
+
+        assert_eq!(selection.branch.as_deref(), Some("dev"));
+        assert_eq!(selection.path_prefix.as_deref(), Some("prompts"));
+    }
+
+    #[test]
     fn extracts_prompt_templates_from_markdown_prompt_blocks() {
         let markdown = r#"
 # Awesome GPT Image
@@ -748,6 +834,36 @@ Negative Prompt: low quality
         assert_eq!(items[0].author.as_deref(), Some("@artist"));
         assert_eq!(items[0].prompt_original, "A neon samurai standing in the rain, cinematic lighting.");
         assert_eq!(items[0].preview_image_urls, vec!["https://example.com/neon.png".to_string()]);
+    }
+
+    #[test]
+    fn ignores_unlabeled_install_code_blocks() {
+        let markdown = r#"
+## Quick Install the Skill
+
+```
+codex skill install imagegen
+```
+
+## Examples
+
+### Poster Prompt
+
+```prompt
+A cinematic poster for a tea brand.
+```
+"#;
+
+        let items = parse_prompt_document(
+            "https://github.com/example/repo",
+            "https://raw.githubusercontent.com/example/repo/main/README.md",
+            markdown,
+        )
+        .expect("markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Poster Prompt");
+        assert_eq!(items[0].prompt_original, "A cinematic poster for a tea brand.");
     }
 
     #[test]

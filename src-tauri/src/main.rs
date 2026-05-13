@@ -133,6 +133,28 @@ async fn archive_prompt_template(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn delete_prompt_template(id: String) -> Result<(), String> {
+    run_blocking_command(move || {
+        let root = workspace::default_workspace_root()?;
+        let workspace = workspace::ensure_workspace(&root)?;
+        db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+        db::delete_prompt_template(std::path::Path::new(&workspace.database_path), &id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cleanup_duplicate_prompt_templates() -> Result<db::DuplicateCleanupResult, String> {
+    run_blocking_command(move || {
+        let root = workspace::default_workspace_root()?;
+        let workspace = workspace::ensure_workspace(&root)?;
+        db::bootstrap(std::path::Path::new(&workspace.database_path))?;
+        db::cleanup_duplicate_prompt_templates(std::path::Path::new(&workspace.database_path))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_generation_history(draft: db::GenerationHistoryDraft) -> Result<(), String> {
     run_blocking_command(move || {
         let root = workspace::default_workspace_root()?;
@@ -212,6 +234,8 @@ fn main() {
             update_prompt_template,
             toggle_prompt_template_favorite,
             archive_prompt_template,
+            delete_prompt_template,
+            cleanup_duplicate_prompt_templates,
             save_generation_history,
             list_generation_history,
             get_app_config,
