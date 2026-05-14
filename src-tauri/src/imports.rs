@@ -4,6 +4,61 @@ use sha2::{Digest, Sha256};
 
 use crate::db;
 
+const DEFAULT_GPT_IMAGE_2_OWNER: &str = "EvoLinkAI";
+const DEFAULT_GPT_IMAGE_2_REPO: &str = "awesome-gpt-image-2-API-and-Prompts";
+const DEFAULT_GPT_IMAGE_2_CASES_URL: &str =
+    "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases";
+const PROMPT_LABELS: &[&str] = &[
+    "Prompt:",
+    "Prompt：",
+    "提示词:",
+    "提示词：",
+    "正向提示词:",
+    "正向提示词：",
+    "中文提示词:",
+    "中文提示词：",
+    "简体中文:",
+    "简体中文：",
+];
+const METADATA_LABELS: &[&str] = &[
+    "Title:",
+    "Title：",
+    "标题:",
+    "标题：",
+    "Category:",
+    "Category：",
+    "分类:",
+    "分类：",
+    "Language:",
+    "Language：",
+    "语言:",
+    "语言：",
+    "Model:",
+    "Model：",
+    "模型:",
+    "模型：",
+    "Author:",
+    "Author：",
+    "作者:",
+    "作者：",
+    "Aspect Ratio:",
+    "Aspect Ratio：",
+    "Aspect ratio:",
+    "Aspect ratio：",
+    "Ratio:",
+    "Ratio：",
+    "比例:",
+    "比例：",
+    "Negative Prompts:",
+    "Negative Prompts：",
+    "Negative Prompt:",
+    "Negative Prompt：",
+    "Negative:",
+    "Negative：",
+    "负面提示词:",
+    "负面提示词：",
+];
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportUrlInfo {
@@ -53,14 +108,14 @@ pub struct ImportResult {
 }
 
 pub fn classify_import_url(url: &str) -> ImportUrlInfo {
-    let trimmed = url.trim().to_string();
-    let source_type = if trimmed.contains("raw.githubusercontent.com") {
+    let normalized_url = normalize_import_url(url);
+    let source_type = if normalized_url.contains("raw.githubusercontent.com") {
         "github_raw"
-    } else if trimmed.contains("github.com") && trimmed.contains("/blob/") {
+    } else if normalized_url.contains("github.com") && normalized_url.contains("/blob/") {
         "github_blob"
-    } else if trimmed.contains("github.com") && trimmed.contains("/tree/") {
+    } else if normalized_url.contains("github.com") && normalized_url.contains("/tree/") {
         "github_tree"
-    } else if trimmed.contains("github.com") {
+    } else if normalized_url.contains("github.com") {
         "github_repo"
     } else {
         "unknown"
@@ -68,7 +123,7 @@ pub fn classify_import_url(url: &str) -> ImportUrlInfo {
 
     ImportUrlInfo {
         is_supported: source_type != "unknown",
-        normalized_url: trimmed,
+        normalized_url,
         source_type: source_type.to_string(),
     }
 }
@@ -81,15 +136,19 @@ pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
         );
     }
 
-    let documents = fetch_import_documents(url)?;
+    let documents = fetch_import_documents(&source.normalized_url)?;
     let mut warnings = Vec::new();
     let mut items = Vec::new();
 
     for document in documents {
-        match parse_prompt_document(url, &document.url, &document.content) {
+        match parse_prompt_document(&source.normalized_url, &document.url, &document.content) {
             Ok(mut parsed) => items.append(&mut parsed),
             Err(err) => warnings.push(format!("{}: {err}", document.url)),
         }
+    }
+
+    if is_default_gpt_image_2_cases_url(&source.normalized_url) {
+        items = prefer_simplified_chinese_items(items);
     }
 
     if items.is_empty() && warnings.is_empty() {
@@ -101,6 +160,33 @@ pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
         items,
         warnings,
     })
+}
+
+fn normalize_import_url(url: &str) -> String {
+    let trimmed = url.trim();
+    let Ok(repo) = parse_github_repo(trimmed) else {
+        return trimmed.to_string();
+    };
+
+    if is_default_gpt_image_2_repo(&repo) && is_github_repo_root_url(trimmed) {
+        DEFAULT_GPT_IMAGE_2_CASES_URL.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_github_repo_root_url(url: &str) -> bool {
+    let without_query = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    let Some(index) = without_query.find("github.com/") else {
+        return false;
+    };
+    let rest = &without_query[index + "github.com/".len()..];
+    let mut parts = rest.split('/').filter(|part| !part.is_empty());
+    parts.next().is_some() && parts.next().is_some() && parts.next().is_none()
 }
 
 pub fn import_prompt_library(
@@ -199,6 +285,7 @@ fn parse_markdown_prompts(
     let mut current_author: Option<String> = None;
     let mut current_images: Vec<String> = Vec::new();
     let mut in_prompt_fence = false;
+    let mut pending_prompt_fence = false;
     let mut fence_buffer: Vec<String> = Vec::new();
     let mut items = Vec::new();
 
@@ -224,8 +311,9 @@ fn parse_markdown_prompts(
 
         if line.starts_with("```") {
             let fence_lang = line.trim_start_matches('`').trim().to_ascii_lowercase();
-            if fence_lang.contains("prompt") {
+            if fence_lang.contains("prompt") || pending_prompt_fence {
                 in_prompt_fence = true;
+                pending_prompt_fence = false;
                 fence_buffer.clear();
             }
             continue;
@@ -247,6 +335,7 @@ fn parse_markdown_prompts(
             current_category = clean_heading(title);
             current_title.clear();
             current_author = None;
+            pending_prompt_fence = false;
             continue;
         }
 
@@ -266,6 +355,7 @@ fn parse_markdown_prompts(
             let (title, author) = split_title_author(&clean_heading(title));
             current_title = title;
             current_author = author;
+            pending_prompt_fence = false;
             continue;
         }
 
@@ -274,8 +364,12 @@ fn parse_markdown_prompts(
             continue;
         }
 
-        if let Some(value) = extract_labeled_value(line, &["Prompt:", "Prompt："]) {
+        if let Some(value) = extract_labeled_value(line, PROMPT_LABELS) {
             current_prompt = Some(value);
+            continue;
+        }
+        if starts_labeled_line(line, PROMPT_LABELS) {
+            pending_prompt_fence = true;
             continue;
         }
 
@@ -337,7 +431,8 @@ fn flush_markdown_item(
     items: &mut Vec<PromptTemplateDraft>,
 ) {
     if let Some(prompt_original) = prompt.take() {
-        if prompt_original.trim().is_empty() {
+        let prompt_original = clean_prompt_text(&prompt_original);
+        if prompt_original.is_empty() {
             return;
         }
         let mut draft = build_prompt_draft(
@@ -397,6 +492,10 @@ fn collect_json_prompts(
                 ],
             );
             if let Some(prompt_original) = prompt {
+                let prompt_original = clean_prompt_text(&prompt_original);
+                if prompt_original.is_empty() {
+                    return;
+                }
                 let title = string_field(map, &["title", "name"])
                     .unwrap_or_else(|| "Imported Prompt".to_string());
                 let category = string_field(map, &["category", "type"])
@@ -518,6 +617,8 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
     );
     let tree: Value = http_get_json(&tree_url)?;
     let mut documents = Vec::new();
+    let default_cases_source =
+        is_default_gpt_image_2_repo(&repo) && is_default_gpt_image_2_cases_url(url);
 
     if let Some(entries) = tree.get("tree").and_then(Value::as_array) {
         for entry in entries {
@@ -531,6 +632,9 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
                 }
             }
             if !is_supported_prompt_file(&lower) {
+                continue;
+            }
+            if default_cases_source && is_clearly_non_simplified_case_path(path) {
                 continue;
             }
 
@@ -582,7 +686,7 @@ struct GitHubTreeSelection {
 }
 
 fn parse_github_repo(url: &str) -> Result<GitHubRepo, String> {
-    let without_query = url.split('?').next().unwrap_or(url);
+    let without_query = url.split(['?', '#']).next().unwrap_or(url);
     let marker = "github.com/";
     let Some(index) = without_query.find(marker) else {
         return Err("Not a GitHub URL.".to_string());
@@ -758,6 +862,201 @@ fn is_supported_prompt_file(path: &str) -> bool {
         || path.contains("case")
 }
 
+fn is_default_gpt_image_2_repo(repo: &GitHubRepo) -> bool {
+    repo.owner.eq_ignore_ascii_case(DEFAULT_GPT_IMAGE_2_OWNER)
+        && repo.name.eq_ignore_ascii_case(DEFAULT_GPT_IMAGE_2_REPO)
+}
+
+fn is_default_gpt_image_2_cases_url(url: &str) -> bool {
+    let Ok(repo) = parse_github_repo(url) else {
+        return false;
+    };
+    if !is_default_gpt_image_2_repo(&repo) {
+        return false;
+    }
+    let lower = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    lower.contains("/tree/") && (lower.ends_with("/cases") || lower.contains("/cases/"))
+}
+
+fn is_clearly_non_simplified_case_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    if lower.contains("zh-cn")
+        || lower.contains("zh_cn")
+        || lower.contains("zh-hans")
+        || lower.contains("zh_hans")
+        || lower.contains("simplified")
+        || path.contains("简体")
+        || path.contains("中文")
+    {
+        return false;
+    }
+
+    let segments = lower.split(['/', '\\', '.', '_', '-']).collect::<Vec<_>>();
+    segments.iter().any(|segment| {
+        matches!(
+            *segment,
+            "en" | "english"
+                | "tw"
+                | "hant"
+                | "traditional"
+                | "ja"
+                | "jp"
+                | "ko"
+                | "kr"
+                | "fr"
+                | "de"
+                | "es"
+                | "ru"
+        )
+    }) || path.contains("繁體")
+        || path.contains("繁体")
+}
+
+fn prefer_simplified_chinese_items(items: Vec<PromptTemplateDraft>) -> Vec<PromptTemplateDraft> {
+    let simplified_items = items
+        .iter()
+        .filter(|item| is_simplified_chinese_prompt(&item.prompt_original))
+        .cloned()
+        .collect::<Vec<_>>();
+    if simplified_items.is_empty() {
+        items
+    } else {
+        simplified_items
+    }
+}
+
+fn clean_prompt_text(raw: &str) -> String {
+    let mut lines = Vec::new();
+    for raw_line in raw.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with("```") || extract_markdown_image_url(line).is_some()
+        {
+            continue;
+        }
+
+        let mut line = strip_markdown_line_prefixes(line).to_string();
+        if starts_labeled_line(&line, METADATA_LABELS) {
+            continue;
+        }
+        if let Some(value) = extract_labeled_value(&line, PROMPT_LABELS) {
+            line = value;
+        }
+        line = strip_markdown_line_prefixes(&line).to_string();
+        let cleaned = strip_wrapping_markdown(&line);
+        if !cleaned.is_empty() {
+            lines.push(cleaned);
+        }
+    }
+
+    lines.join("\n").trim().to_string()
+}
+
+fn strip_markdown_line_prefixes(mut line: &str) -> &str {
+    loop {
+        let trimmed = line.trim_start();
+        if trimmed == line && !has_removable_prefix(trimmed) {
+            return trimmed.trim();
+        }
+        line = trimmed;
+        if let Some(rest) = line.strip_prefix('>') {
+            line = rest;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('#') {
+            line = rest.trim_start_matches('#');
+            continue;
+        }
+        if let Some(rest) = line
+            .strip_prefix("- ")
+            .or_else(|| line.strip_prefix("* "))
+            .or_else(|| line.strip_prefix("+ "))
+        {
+            line = rest;
+            continue;
+        }
+        if let Some(rest) = strip_ordered_prefix(line) {
+            line = rest;
+            continue;
+        }
+        return line.trim();
+    }
+}
+
+fn has_removable_prefix(line: &str) -> bool {
+    line.starts_with('>')
+        || line.starts_with('#')
+        || line.starts_with("- ")
+        || line.starts_with("* ")
+        || line.starts_with("+ ")
+        || strip_ordered_prefix(line).is_some()
+}
+
+fn strip_ordered_prefix(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if let Some(rest) = strip_parenthesized_number(trimmed, '(', ')') {
+        return Some(rest);
+    }
+    if let Some(rest) = strip_parenthesized_number(trimmed, '（', '）') {
+        return Some(rest);
+    }
+
+    let digit_end = trimmed
+        .char_indices()
+        .take_while(|(_, char)| char.is_ascii_digit())
+        .map(|(index, char)| index + char.len_utf8())
+        .last()?;
+    let rest = &trimmed[digit_end..];
+    rest.strip_prefix('.')
+        .or_else(|| rest.strip_prefix('、'))
+        .or_else(|| rest.strip_prefix(')'))
+        .map(str::trim_start)
+}
+
+fn strip_parenthesized_number(line: &str, open: char, close: char) -> Option<&str> {
+    let rest = line.strip_prefix(open)?;
+    let digit_end = rest
+        .char_indices()
+        .take_while(|(_, char)| char.is_ascii_digit())
+        .map(|(index, char)| index + char.len_utf8())
+        .last()?;
+    rest[digit_end..].strip_prefix(close).map(str::trim_start)
+}
+
+fn strip_wrapping_markdown(line: &str) -> String {
+    let mut value = line.trim();
+    loop {
+        let next = value
+            .strip_prefix("**")
+            .and_then(|rest| rest.strip_suffix("**"))
+            .or_else(|| {
+                value
+                    .strip_prefix("__")
+                    .and_then(|rest| rest.strip_suffix("__"))
+            })
+            .or_else(|| {
+                value
+                    .strip_prefix('`')
+                    .and_then(|rest| rest.strip_suffix('`'))
+            });
+        let Some(stripped) = next else {
+            break;
+        };
+        value = stripped.trim();
+    }
+    value.to_string()
+}
+
+fn starts_labeled_line(line: &str, labels: &[&str]) -> bool {
+    labels
+        .iter()
+        .any(|label| line.trim_start().starts_with(label))
+}
+
 fn extract_labeled_value(line: &str, labels: &[&str]) -> Option<String> {
     labels.iter().find_map(|label| {
         line.strip_prefix(label)
@@ -860,14 +1159,35 @@ fn infer_model_hint(source_repo: &str) -> String {
 }
 
 fn infer_language(prompt: &str) -> String {
-    if prompt
+    if !contains_cjk(prompt) {
+        return "en".to_string();
+    }
+    if contains_traditional_chinese_marker(prompt) {
+        "zh-TW".to_string()
+    } else {
+        "zh-CN".to_string()
+    }
+}
+
+fn is_simplified_chinese_prompt(prompt: &str) -> bool {
+    contains_cjk(prompt) && !contains_traditional_chinese_marker(prompt)
+}
+
+fn contains_cjk(value: &str) -> bool {
+    value
         .chars()
         .any(|char| ('\u{4e00}'..='\u{9fff}').contains(&char))
-    {
-        "zh".to_string()
-    } else {
-        "en".to_string()
-    }
+}
+
+fn contains_traditional_chinese_marker(value: &str) -> bool {
+    const TRADITIONAL_ONLY_CHARS: &[char] = &[
+        '體', '圖', '畫', '顏', '風', '這', '個', '與', '為', '後', '裡', '讓', '將', '開', '關',
+        '選', '標', '題', '視', '覺', '廣', '場', '燈', '優', '質', '創', '應', '時', '間', '層',
+        '線', '邊', '貓', '隻',
+    ];
+    value
+        .chars()
+        .any(|char| TRADITIONAL_ONLY_CHARS.contains(&char))
 }
 
 fn current_timestamp() -> String {
@@ -1133,5 +1453,173 @@ Prompt: A warm coffee shop poster with morning light.
         assert_eq!(items[0].title, "Perfume Ad");
         assert_eq!(items[1].title, "Coffee Ad");
         assert_eq!(items[1].category, "Posters");
+    }
+
+    #[test]
+    fn normalizes_default_gpt_image_2_repo_root_to_cases_tree() {
+        let info = classify_import_url(
+            "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/?tab=readme#readme",
+        );
+
+        assert_eq!(info.source_type, "github_tree");
+        assert_eq!(info.normalized_url, DEFAULT_GPT_IMAGE_2_CASES_URL);
+    }
+
+    #[test]
+    fn keeps_default_gpt_image_2_cases_tree_url_unchanged() {
+        let info = classify_import_url(DEFAULT_GPT_IMAGE_2_CASES_URL);
+
+        assert_eq!(info.source_type, "github_tree");
+        assert_eq!(info.normalized_url, DEFAULT_GPT_IMAGE_2_CASES_URL);
+    }
+
+    #[test]
+    fn does_not_rewrite_other_github_repo_roots() {
+        let info = classify_import_url("https://github.com/example/repo");
+
+        assert_eq!(info.source_type, "github_repo");
+        assert_eq!(info.normalized_url, "https://github.com/example/repo");
+    }
+
+    #[test]
+    fn prefers_simplified_chinese_items_for_default_cases_source() {
+        let items = vec![
+            build_prompt_draft(
+                "https://github.com/example/repo",
+                "https://raw.githubusercontent.com/example/repo/main/cases/zh.md",
+                "简体中文",
+                "cases",
+                "一只橙色小猫坐在窗边，柔和自然光。".to_string(),
+                None,
+                None,
+                Vec::new(),
+            ),
+            build_prompt_draft(
+                "https://github.com/example/repo",
+                "https://raw.githubusercontent.com/example/repo/main/cases/tw.md",
+                "繁體中文",
+                "cases",
+                "一隻橙色小貓坐在窗邊，柔和自然光。".to_string(),
+                None,
+                None,
+                Vec::new(),
+            ),
+            build_prompt_draft(
+                "https://github.com/example/repo",
+                "https://raw.githubusercontent.com/example/repo/main/cases/en.md",
+                "English",
+                "cases",
+                "An orange kitten sitting by the window.".to_string(),
+                None,
+                None,
+                Vec::new(),
+            ),
+        ];
+
+        let filtered = prefer_simplified_chinese_items(items);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(
+            filtered[0].prompt_original,
+            "一只橙色小猫坐在窗边，柔和自然光。"
+        );
+        assert_eq!(filtered[0].language, "zh-CN");
+    }
+
+    #[test]
+    fn falls_back_to_all_items_when_no_simplified_chinese_items_exist() {
+        let items = vec![
+            build_prompt_draft(
+                "https://github.com/example/repo",
+                "https://raw.githubusercontent.com/example/repo/main/cases/tw.md",
+                "繁體中文",
+                "cases",
+                "一隻橙色小貓坐在窗邊，柔和自然光。".to_string(),
+                None,
+                None,
+                Vec::new(),
+            ),
+            build_prompt_draft(
+                "https://github.com/example/repo",
+                "https://raw.githubusercontent.com/example/repo/main/cases/en.md",
+                "English",
+                "cases",
+                "An orange kitten sitting by the window.".to_string(),
+                None,
+                None,
+                Vec::new(),
+            ),
+        ];
+
+        let filtered = prefer_simplified_chinese_items(items);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn cleans_prompt_text_before_building_markdown_item() {
+        let markdown = r#"
+## 人像
+
+### 电影感少女
+
+提示词：
+```text
+1. **一位穿红色斗篷的少女站在雪山之巅，电影级光影，细腻面部表情。**
+```
+"#;
+
+        let items = parse_prompt_document(
+            "https://github.com/example/repo",
+            "https://raw.githubusercontent.com/example/repo/main/cases/zh.md",
+            markdown,
+        )
+        .expect("markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].prompt_original,
+            "一位穿红色斗篷的少女站在雪山之巅，电影级光影，细腻面部表情。"
+        );
+    }
+
+    #[test]
+    fn cleans_prompt_text_from_json_prompt_field() {
+        let json = r#"
+[
+  {
+    "title": "产品海报",
+    "prompt": "提示词：- **一瓶高级香水置于反光玻璃上，柔和棚拍灯光。**"
+  }
+]
+"#;
+
+        let items = parse_prompt_document(
+            "https://github.com/example/repo",
+            "https://raw.githubusercontent.com/example/repo/main/cases/prompts.json",
+            json,
+        )
+        .expect("json should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].prompt_original,
+            "一瓶高级香水置于反光玻璃上，柔和棚拍灯光。"
+        );
+    }
+
+    #[test]
+    fn removes_metadata_lines_from_prompt_text() {
+        let cleaned = clean_prompt_text(
+            r#"
+标题：产品海报
+分类：商业摄影
+提示词：一瓶高级香水置于反光玻璃上，柔和棚拍灯光。
+比例：1:1
+负面提示词：低清晰度，水印
+"#,
+        );
+
+        assert_eq!(cleaned, "一瓶高级香水置于反光玻璃上，柔和棚拍灯光。");
     }
 }

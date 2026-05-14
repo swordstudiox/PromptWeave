@@ -11,3 +11,4 @@ src-tauri/gen/
 .env.*
 .worktrees/
 .claude
+需求.txt

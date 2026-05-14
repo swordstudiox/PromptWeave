@@ -9,6 +9,8 @@ import type { ImportPreview, ImportResult, PromptLibrarySourceRecord } from "../
 import { EmptyState } from "./EmptyState";
 import { FeedbackMessage } from "./FeedbackMessage";
 
+const DEFAULT_PROMPT_LIBRARY_URL = "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases";
+
 function classifyGitHubUrl(url: string): string {
   if (url.includes("raw.githubusercontent.com")) return "GitHub raw 文件";
   if (url.includes("/blob/")) return "GitHub blob 文件";
@@ -18,7 +20,7 @@ function classifyGitHubUrl(url: string): string {
 }
 
 export function ImportPanel() {
-  const [url, setUrl] = useState("https://github.com/EvoLinkAI/awesome-gpt-image-2-prompts");
+  const [url, setUrl] = useState(DEFAULT_PROMPT_LIBRARY_URL);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [sources, setSources] = useState<PromptLibrarySourceRecord[]>([]);

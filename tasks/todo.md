@@ -2,32 +2,30 @@
 
 ## 范围
 
-- 修复后端稳定性问题：FTS 空查询、GitHub 带斜杠分支解析、compatible 图片 API endpoint 归一化。
-- 收敛前端服务层：集中 DTO、封装 Tauri invoke、修复创作页模板搜索竞态。
-- 优化 UI：设计 token、基础交互态、统一反馈与空态。
-- 明确不处理 API Key 明文保存。
+- 修复模板库默认导入源：默认使用 `https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases`。
+- 修复用户粘贴目标仓库根地址时的导入行为：后端自动归一化到 `cases` 目录。
+- 默认导入简体中文模板，跳过明显非简体中文路径，并在解析后优先保留简体中文条目。
+- 清洗导入后的提示词正文，只保留提示词文本，去掉 Markdown 符号、标签、编号、代码围栏和元数据行。
 
 ## 可选项
 
-- 原生 `window.confirm` 本轮保留，不做完整弹窗系统。
-- UI 人工验证如环境受限，可只记录自动化验证结果并列出手动检查路径。
+- 不新增语言选择 UI，本轮只做目标仓库的默认简体中文导入。
+- 不修改数据库结构，继续使用现有 `prompt_original`、`language` 等字段。
+- 不引入外部繁简识别依赖，使用轻量启发式识别。
+- 如环境缺少浏览器自动化能力，记录自动化验证结果和手工检查路径。
 
 ## 执行清单
 
-- [x] 后端：补测试并修复 FTS 清洗后空查询。
-- [x] 后端：补测试并修复 GitHub tree/blob 带斜杠分支解析。
-- [x] 后端：补测试并修复 compatible 图片 API endpoint 归一化。
-- [x] 前端：新增 `src/types/backend.ts`。
-- [x] 前端：新增 `src/lib/services/*` 并替换组件直接 `invoke`。
-- [x] 前端：修复 `CreatorWorkspace` 模板搜索竞态。
-- [x] UI：新增反馈/空态组件。
-- [x] UI：补齐 CSS token 与控件交互态。
-- [x] UI：接入主要页面反馈与空态。
-- [x] 验证：运行 TypeScript 类型检查。
-- [x] 验证：运行前端测试。
-- [x] 验证：运行 Rust 测试。
+- [x] 前端：更新导入面板默认 URL。
+- [x] 后端：目标仓库根地址归一化为 `/tree/main/cases`。
+- [x] 后端：默认筛选/优先保留简体中文模板。
+- [x] 后端：清洗 Markdown/JSON 提示词正文。
+- [x] 测试：补充 URL 归一化、语言筛选、正文清洗回归测试。
+- [x] 验证：运行 Rust 导入模块测试。
+- [x] 验证：运行 Rust 全量测试。
+- [x] 验证：运行前端类型检查和测试。
 - [x] 评审：记录最终结果与未验证项。
 
 ## 评审结果
 
-阶段 1 已完成：修复 FTS 清洗后空查询、GitHub tree/blob 带斜杠分支解析、compatible 图片 API endpoint 归一化，并补充 Rust 测试。阶段 2 已完成：集中后端 DTO 到 `src/types/backend.ts`，新增 template/creator/import/config service 封装，相关组件已移除直接 `invoke` 调用；`CreatorWorkspace` 模板搜索已使用 request id 防止旧请求覆盖新输入；新增模板记录到 `PromptTemplateReference` 映射单元测试。阶段 3 已完成：新增轻量反馈/空态组件，补齐基础设计 token 与交互态，并在创作、模板库、导入、历史、设置和全局错误区域统一反馈与空态。已通过 `corepack pnpm typecheck`、`corepack pnpm test -- --run`、`cargo test --manifest-path "src-tauri/Cargo.toml"` 与 `corepack pnpm vite build`。已启动 Vite 开发服务器并确认 `http://127.0.0.1:5173` 可访问；由于当前环境没有可用浏览器自动化工具，未做真实视觉交互验证。未触碰 API Key 存储策略，原生 `window.confirm` 保留。
+已完成模板库导入修复：导入面板默认 URL 已改为 `https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases`；后端会把目标仓库根地址归一化到 `cases` 目录；默认导入时会跳过明显非简体中文路径，并在解析后优先保留简体中文提示词；Markdown/JSON 导入会在入库前清洗提示词正文，去掉标签、编号、代码围栏、Markdown 包裹符号和元数据行。已补充 URL 归一化、简体中文筛选、Markdown/JSON 正文清洗回归测试。验证通过：`cargo test --manifest-path "F:/mySoftwareTools/PromptWeave/src-tauri/Cargo.toml" imports`、`cargo test --manifest-path "F:/mySoftwareTools/PromptWeave/src-tauri/Cargo.toml"`、`corepack pnpm --dir "F:/mySoftwareTools/PromptWeave" typecheck`、`corepack pnpm --dir "F:/mySoftwareTools/PromptWeave" test`。已启动 Vite 开发服务器并确认 `http://127.0.0.1:5173/` 返回 200；当前环境没有浏览器自动化工具，未完成真实浏览器交互验证。
