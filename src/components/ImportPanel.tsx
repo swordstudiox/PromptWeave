@@ -9,7 +9,23 @@ import type { ImportPreview, ImportResult, PromptLibrarySourceRecord } from "../
 import { EmptyState } from "./EmptyState";
 import { FeedbackMessage } from "./FeedbackMessage";
 
-const DEFAULT_PROMPT_LIBRARY_URL = "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases";
+const DEFAULT_PROMPT_LIBRARY_PRESETS = [
+  {
+    name: "EvoLinkAI cases",
+    description: "按 cases 分类导入，默认优先简体中文模板。",
+    url: "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases",
+  },
+  {
+    name: "freestylefly gallery",
+    description: "展开 gallery 分册，优先提取提示词中的中文段落。",
+    url: "https://github.com/freestylefly/awesome-gpt-image-2/blob/main/docs/gallery.md",
+  },
+  {
+    name: "YouMind README_zh",
+    description: "从中文 README 案例中提取提示词代码块。",
+    url: "https://github.com/YouMind-OpenLab/awesome-gpt-image-2/blob/main/README_zh.md",
+  },
+];
 
 function classifyGitHubUrl(url: string): string {
   if (url.includes("raw.githubusercontent.com")) return "GitHub raw 文件";
@@ -20,7 +36,7 @@ function classifyGitHubUrl(url: string): string {
 }
 
 export function ImportPanel() {
-  const [url, setUrl] = useState(DEFAULT_PROMPT_LIBRARY_URL);
+  const [url, setUrl] = useState(DEFAULT_PROMPT_LIBRARY_PRESETS[0].url);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [sources, setSources] = useState<PromptLibrarySourceRecord[]>([]);
@@ -40,6 +56,13 @@ export function ImportPanel() {
     } catch (err) {
       setError(String(err));
     }
+  }
+
+  function selectPreset(url: string) {
+    setUrl(url);
+    setPreview(null);
+    setResult(null);
+    setError(null);
   }
 
   async function previewImport() {
@@ -94,6 +117,25 @@ export function ImportPanel() {
         <button className="secondary-button" disabled={isBusy || Boolean(syncingSourceId)} onClick={() => void loadSources()}>
           刷新来源
         </button>
+      </div>
+      <div className="source-list built-in-source-list">
+        <h3>内置 GPT Image 2 来源</h3>
+        {DEFAULT_PROMPT_LIBRARY_PRESETS.map((preset) => (
+          <article key={preset.url} className="template-row source-row">
+            <div className="template-title-row">
+              <strong>{preset.name}</strong>
+              <button
+                className="secondary-button"
+                disabled={isBusy || Boolean(syncingSourceId)}
+                onClick={() => selectPreset(preset.url)}
+              >
+                使用此来源
+              </button>
+            </div>
+            <span>{preset.description}</span>
+            <small>{preset.url}</small>
+          </article>
+        ))}
       </div>
       <input value={url} onChange={(event) => setUrl(event.target.value)} />
       <p>识别结果：{type}</p>

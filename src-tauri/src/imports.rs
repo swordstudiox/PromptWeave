@@ -8,6 +8,14 @@ const DEFAULT_GPT_IMAGE_2_OWNER: &str = "EvoLinkAI";
 const DEFAULT_GPT_IMAGE_2_REPO: &str = "awesome-gpt-image-2-API-and-Prompts";
 const DEFAULT_GPT_IMAGE_2_CASES_URL: &str =
     "https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/tree/main/cases";
+const FREESTYLEFLY_GALLERY_URL: &str =
+    "https://github.com/freestylefly/awesome-gpt-image-2/blob/main/docs/gallery.md";
+const FREESTYLEFLY_PART_1_RAW_URL: &str =
+    "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main/docs/gallery-part-1.md";
+const FREESTYLEFLY_PART_2_RAW_URL: &str =
+    "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main/docs/gallery-part-2.md";
+const YOUMIND_README_ZH_URL: &str =
+    "https://github.com/YouMind-OpenLab/awesome-gpt-image-2/blob/main/README_zh.md";
 const PROMPT_LABELS: &[&str] = &[
     "Prompt:",
     "Prompt：",
@@ -58,6 +66,19 @@ const METADATA_LABELS: &[&str] = &[
     "负面提示词:",
     "负面提示词：",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportAdapterKind {
+    EvoLinkCases,
+    FreestyleflyGallery,
+    YouMindReadmeZh,
+    Generic,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GitHubRepoFetchOptions {
+    prefer_simplified_case_paths: bool,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,20 +157,24 @@ pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
         );
     }
 
-    let documents = fetch_import_documents(&source.normalized_url)?;
+    let adapter = resolve_import_adapter(&source.normalized_url);
+    let documents = fetch_import_documents_for_adapter(adapter, &source.normalized_url)?;
     let mut warnings = Vec::new();
     let mut items = Vec::new();
 
     for document in documents {
-        match parse_prompt_document(&source.normalized_url, &document.url, &document.content) {
+        match parse_prompt_document_for_adapter(
+            adapter,
+            &source.normalized_url,
+            &document.url,
+            &document.content,
+        ) {
             Ok(mut parsed) => items.append(&mut parsed),
             Err(err) => warnings.push(format!("{}: {err}", document.url)),
         }
     }
 
-    if is_default_gpt_image_2_cases_url(&source.normalized_url) {
-        items = prefer_simplified_chinese_items(items);
-    }
+    items = post_process_import_items(adapter, items);
 
     if items.is_empty() && warnings.is_empty() {
         warnings.push("No prompt-like Markdown or JSON entries were found.".to_string());
@@ -164,14 +189,70 @@ pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
 
 fn normalize_import_url(url: &str) -> String {
     let trimmed = url.trim();
-    let Ok(repo) = parse_github_repo(trimmed) else {
-        return trimmed.to_string();
+    if let Some(normalized) = normalize_builtin_import_url(trimmed) {
+        return normalized;
+    }
+    trimmed.to_string()
+}
+
+fn normalize_builtin_import_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    let without_query = trimmed
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    let lower = without_query.to_ascii_lowercase();
+    if lower
+        == "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/main/docs/gallery.md"
+    {
+        return Some(FREESTYLEFLY_GALLERY_URL.to_string());
+    }
+    if lower
+        == "https://raw.githubusercontent.com/youmind-openlab/awesome-gpt-image-2/main/readme_zh.md"
+    {
+        return Some(YOUMIND_README_ZH_URL.to_string());
+    }
+
+    let Ok(repo) = parse_github_repo(without_query) else {
+        return None;
     };
 
-    if is_default_gpt_image_2_repo(&repo) && is_github_repo_root_url(trimmed) {
-        DEFAULT_GPT_IMAGE_2_CASES_URL.to_string()
+    if is_default_gpt_image_2_repo(&repo)
+        && (is_github_repo_root_url(without_query)
+            || is_default_gpt_image_2_cases_url(without_query))
+    {
+        return Some(DEFAULT_GPT_IMAGE_2_CASES_URL.to_string());
+    }
+
+    if repo.owner.eq_ignore_ascii_case("freestylefly")
+        && repo.name.eq_ignore_ascii_case("awesome-gpt-image-2")
+        && (lower.ends_with("/blob/main/docs/gallery.md")
+            || lower.ends_with("/main/docs/gallery.md"))
+    {
+        return Some(FREESTYLEFLY_GALLERY_URL.to_string());
+    }
+
+    if repo.owner.eq_ignore_ascii_case("YouMind-OpenLab")
+        && repo.name.eq_ignore_ascii_case("awesome-gpt-image-2")
+        && (lower.ends_with("/blob/main/readme_zh.md") || lower.ends_with("/main/readme_zh.md"))
+    {
+        return Some(YOUMIND_README_ZH_URL.to_string());
+    }
+
+    None
+}
+
+fn resolve_import_adapter(url: &str) -> ImportAdapterKind {
+    let normalized = normalize_import_url(url);
+    if is_default_gpt_image_2_cases_url(&normalized) {
+        ImportAdapterKind::EvoLinkCases
+    } else if normalized == FREESTYLEFLY_GALLERY_URL {
+        ImportAdapterKind::FreestyleflyGallery
+    } else if normalized == YOUMIND_README_ZH_URL {
+        ImportAdapterKind::YouMindReadmeZh
     } else {
-        trimmed.to_string()
+        ImportAdapterKind::Generic
     }
 }
 
@@ -262,6 +343,41 @@ pub fn parse_prompt_document(
     source_url: &str,
     content: &str,
 ) -> Result<Vec<PromptTemplateDraft>, String> {
+    let adapter = match resolve_import_adapter(source_repo) {
+        ImportAdapterKind::Generic => resolve_import_adapter(source_url),
+        adapter => adapter,
+    };
+    parse_prompt_document_for_adapter(adapter, source_repo, source_url, content)
+}
+
+fn parse_prompt_document_for_adapter(
+    adapter: ImportAdapterKind,
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Result<Vec<PromptTemplateDraft>, String> {
+    match adapter {
+        ImportAdapterKind::FreestyleflyGallery => Ok(parse_freestylefly_gallery_prompts(
+            source_repo,
+            source_url,
+            content,
+        )),
+        ImportAdapterKind::YouMindReadmeZh => Ok(parse_youmind_readme_zh_prompts(
+            source_repo,
+            source_url,
+            content,
+        )),
+        ImportAdapterKind::EvoLinkCases | ImportAdapterKind::Generic => {
+            parse_prompt_document_generic(source_repo, source_url, content)
+        }
+    }
+}
+
+fn parse_prompt_document_generic(
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Result<Vec<PromptTemplateDraft>, String> {
     if source_url.to_ascii_lowercase().ends_with(".json")
         || content.trim_start().starts_with('[')
         || content.trim_start().starts_with('{')
@@ -270,6 +386,138 @@ pub fn parse_prompt_document(
     }
 
     Ok(parse_markdown_prompts(source_repo, source_url, content))
+}
+
+fn post_process_import_items(
+    adapter: ImportAdapterKind,
+    items: Vec<PromptTemplateDraft>,
+) -> Vec<PromptTemplateDraft> {
+    match adapter {
+        ImportAdapterKind::EvoLinkCases => prefer_simplified_chinese_items(items),
+        ImportAdapterKind::FreestyleflyGallery
+        | ImportAdapterKind::YouMindReadmeZh
+        | ImportAdapterKind::Generic => items,
+    }
+}
+
+fn parse_freestylefly_gallery_prompts(
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Vec<PromptTemplateDraft> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut current_title: Option<String> = None;
+    let mut current_images: Vec<String> = Vec::new();
+    let mut items = Vec::new();
+
+    while index < lines.len() {
+        let line = lines[index].trim();
+        if let Some(title) = freestylefly_case_title(line) {
+            current_title = Some(title);
+            current_images.clear();
+            index += 1;
+            continue;
+        }
+
+        if current_title.is_some() {
+            if let Some(image_url) = extract_image_url(line) {
+                current_images.push(image_url);
+                index += 1;
+                continue;
+            }
+
+            if is_freestylefly_prompt_label(line) {
+                if let Some((prompt, next_index)) = extract_next_fenced_block(&lines, index + 1) {
+                    let prompt = extract_preferred_chinese_section(&prompt);
+                    let prompt = clean_prompt_text(&prompt);
+                    if !prompt.is_empty() {
+                        let title = current_title.as_deref().unwrap_or("Imported Prompt");
+                        let mut draft = build_prompt_draft(
+                            source_repo,
+                            source_url,
+                            title,
+                            "freestylefly gallery",
+                            prompt,
+                            None,
+                            None,
+                            Vec::new(),
+                        );
+                        draft.preview_image_urls = std::mem::take(&mut current_images);
+                        items.push(draft);
+                    }
+                    current_title = None;
+                    index = next_index;
+                    continue;
+                }
+            }
+        }
+
+        index += 1;
+    }
+
+    items
+}
+
+fn parse_youmind_readme_zh_prompts(
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Vec<PromptTemplateDraft> {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut current_title: Option<String> = None;
+    let mut items = Vec::new();
+
+    while index < lines.len() {
+        let line = lines[index].trim();
+        if let Some(title) = youmind_case_title(line) {
+            current_title = Some(title);
+            index += 1;
+            continue;
+        }
+
+        if current_title.is_some() && is_youmind_prompt_section(line) {
+            if let Some((prompt, next_index)) = extract_next_fenced_block(&lines, index + 1) {
+                let prompt = prompt.trim().to_string();
+                if !prompt.is_empty() {
+                    let mut preview_image_urls = Vec::new();
+                    let mut scan_index = next_index;
+                    while scan_index < lines.len() {
+                        let scan_line = lines[scan_index].trim();
+                        if youmind_case_title(scan_line).is_some() {
+                            break;
+                        }
+                        if let Some(image_url) = extract_image_url(scan_line) {
+                            preview_image_urls.push(image_url);
+                        }
+                        scan_index += 1;
+                    }
+
+                    let title = current_title.as_deref().unwrap_or("Imported Prompt");
+                    let mut draft = build_prompt_draft(
+                        source_repo,
+                        source_url,
+                        title,
+                        "YouMind README_zh",
+                        prompt,
+                        None,
+                        None,
+                        Vec::new(),
+                    );
+                    draft.preview_image_urls = preview_image_urls;
+                    items.push(draft);
+                }
+                current_title = None;
+                index = next_index;
+                continue;
+            }
+        }
+
+        index += 1;
+    }
+
+    items
 }
 
 fn parse_markdown_prompts(
@@ -571,32 +819,113 @@ struct ImportDocument {
     content: String,
 }
 
-fn fetch_import_documents(url: &str) -> Result<Vec<ImportDocument>, String> {
-    let info = classify_import_url(url);
-    match info.source_type.as_str() {
-        "github_raw" => Ok(vec![ImportDocument {
-            url: url.to_string(),
-            content: http_get_text(url)?,
-        }]),
-        "github_blob" => {
-            let repo = parse_github_repo(url)?;
-            let ref_candidates = fetch_github_ref_candidates(&repo).unwrap_or_default();
-            let raw_url = if ref_candidates.is_empty() {
-                github_blob_to_raw(url)?
-            } else {
-                github_blob_to_raw_with_refs(url, &ref_candidates)?
-            };
-            Ok(vec![ImportDocument {
-                url: raw_url.clone(),
-                content: http_get_text(&raw_url)?,
-            }])
+fn fetch_import_documents_for_adapter(
+    adapter: ImportAdapterKind,
+    url: &str,
+) -> Result<Vec<ImportDocument>, String> {
+    match adapter {
+        ImportAdapterKind::FreestyleflyGallery => fetch_freestylefly_gallery_documents(url),
+        ImportAdapterKind::YouMindReadmeZh => fetch_github_blob_or_raw_document(url),
+        ImportAdapterKind::EvoLinkCases => fetch_github_repo_documents(
+            url,
+            GitHubRepoFetchOptions {
+                prefer_simplified_case_paths: true,
+            },
+        ),
+        ImportAdapterKind::Generic => {
+            let info = classify_import_url(url);
+            match info.source_type.as_str() {
+                "github_raw" => Ok(vec![ImportDocument {
+                    url: url.to_string(),
+                    content: http_get_text(url)?,
+                }]),
+                "github_blob" => fetch_github_blob_or_raw_document(url),
+                "github_repo" | "github_tree" => {
+                    fetch_github_repo_documents(url, GitHubRepoFetchOptions::default())
+                }
+                _ => Err("Unsupported import URL.".to_string()),
+            }
         }
-        "github_repo" | "github_tree" => fetch_github_repo_documents(url),
-        _ => Err("Unsupported import URL.".to_string()),
     }
 }
 
-fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String> {
+fn fetch_github_blob_or_raw_document(url: &str) -> Result<Vec<ImportDocument>, String> {
+    if url.contains("raw.githubusercontent.com") {
+        return Ok(vec![ImportDocument {
+            url: url.to_string(),
+            content: http_get_text(url)?,
+        }]);
+    }
+
+    let repo = parse_github_repo(url)?;
+    let ref_candidates = fetch_github_ref_candidates(&repo).unwrap_or_default();
+    let raw_url = if ref_candidates.is_empty() {
+        github_blob_to_raw(url)?
+    } else {
+        github_blob_to_raw_with_refs(url, &ref_candidates)?
+    };
+    Ok(vec![ImportDocument {
+        url: raw_url.clone(),
+        content: http_get_text(&raw_url)?,
+    }])
+}
+
+fn fetch_freestylefly_gallery_documents(url: &str) -> Result<Vec<ImportDocument>, String> {
+    let index_documents = fetch_github_blob_or_raw_document(url)?;
+    let index_content = index_documents
+        .first()
+        .map(|document| document.content.as_str())
+        .unwrap_or_default();
+    let mut part_urls = extract_freestylefly_gallery_part_links(index_content);
+    if part_urls.is_empty() {
+        part_urls = vec![
+            FREESTYLEFLY_PART_1_RAW_URL.to_string(),
+            FREESTYLEFLY_PART_2_RAW_URL.to_string(),
+        ];
+    }
+
+    let mut documents = Vec::new();
+    for raw_url in part_urls {
+        if let Ok(content) = http_get_text(&raw_url) {
+            documents.push(ImportDocument {
+                url: raw_url,
+                content,
+            });
+        }
+    }
+
+    if documents.is_empty() {
+        return Err("No freestylefly gallery part documents were found.".to_string());
+    }
+    Ok(documents)
+}
+
+fn extract_freestylefly_gallery_part_links(content: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for line in content.lines() {
+        if let Some(raw_url) = freestylefly_part_raw_url(line) {
+            if !urls.iter().any(|url| url == &raw_url) {
+                urls.push(raw_url);
+            }
+        }
+    }
+    urls
+}
+
+fn freestylefly_part_raw_url(value: &str) -> Option<String> {
+    if value.contains("gallery-part-1.md") {
+        Some(FREESTYLEFLY_PART_1_RAW_URL.to_string())
+    } else if value.contains("gallery-part-2.md") {
+        Some(FREESTYLEFLY_PART_2_RAW_URL.to_string())
+    } else {
+        None
+    }
+}
+
+fn fetch_github_repo_documents(
+    url: &str,
+    options: GitHubRepoFetchOptions,
+) -> Result<Vec<ImportDocument>, String> {
     let repo = parse_github_repo(url)?;
     let metadata_url = format!("https://api.github.com/repos/{}/{}", repo.owner, repo.name);
     let metadata: Value = http_get_json(&metadata_url)?;
@@ -617,8 +946,6 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
     );
     let tree: Value = http_get_json(&tree_url)?;
     let mut documents = Vec::new();
-    let default_cases_source =
-        is_default_gpt_image_2_repo(&repo) && is_default_gpt_image_2_cases_url(url);
 
     if let Some(entries) = tree.get("tree").and_then(Value::as_array) {
         for entry in entries {
@@ -634,7 +961,7 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
             if !is_supported_prompt_file(&lower) {
                 continue;
             }
-            if default_cases_source && is_clearly_non_simplified_case_path(path) {
+            if options.prefer_simplified_case_paths && is_clearly_non_simplified_case_path(path) {
                 continue;
             }
 
@@ -848,6 +1175,98 @@ fn http_get_text(url: &str) -> Result<String, String> {
 fn http_get_json(url: &str) -> Result<Value, String> {
     let text = http_get_text(url)?;
     serde_json::from_str(&text).map_err(|err| format!("Invalid JSON from {url}: {err}"))
+}
+
+fn freestylefly_case_title(line: &str) -> Option<String> {
+    let title = line.strip_prefix("### ")?.trim();
+    let rest = title.strip_prefix('例')?.trim_start();
+    title_after_separator(rest)
+}
+
+fn youmind_case_title(line: &str) -> Option<String> {
+    let title = line.strip_prefix("### ")?.trim();
+    let rest = title.strip_prefix("No.")?.trim_start();
+    title_after_separator(rest)
+}
+
+fn title_after_separator(value: &str) -> Option<String> {
+    let ascii = value.find(':');
+    let full_width = value.find('：');
+    let index = match (ascii, full_width) {
+        (Some(left), Some(right)) => left.min(right),
+        (Some(index), None) | (None, Some(index)) => index,
+        (None, None) => return None,
+    };
+    let separator_len = value[index..].chars().next()?.len_utf8();
+    let title = value[index + separator_len..].trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+fn is_freestylefly_prompt_label(line: &str) -> bool {
+    let stripped = strip_wrapping_markdown(line);
+    starts_labeled_line(&stripped, PROMPT_LABELS)
+}
+
+fn is_youmind_prompt_section(line: &str) -> bool {
+    let heading = line.trim_start_matches('#').trim();
+    heading.contains("提示词")
+}
+
+fn extract_next_fenced_block(lines: &[&str], start_index: usize) -> Option<(String, usize)> {
+    let mut index = start_index;
+    while index < lines.len() && !lines[index].trim().starts_with("```") {
+        index += 1;
+    }
+    if index >= lines.len() {
+        return None;
+    }
+
+    index += 1;
+    let mut buffer = Vec::new();
+    while index < lines.len() {
+        let line = lines[index].trim();
+        if line.starts_with("```") {
+            return Some((buffer.join("\n"), index + 1));
+        }
+        buffer.push(lines[index].to_string());
+        index += 1;
+    }
+    None
+}
+
+fn extract_preferred_chinese_section(prompt: &str) -> String {
+    let lines = prompt.lines().collect::<Vec<_>>();
+    let Some(start) = lines
+        .iter()
+        .position(|line| line.trim().eq_ignore_ascii_case("[中文]"))
+    else {
+        return prompt.trim().to_string();
+    };
+
+    let mut selected = Vec::new();
+    for line in lines.iter().skip(start + 1) {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            break;
+        }
+        selected.push(*line);
+    }
+
+    selected.join("\n").trim().to_string()
+}
+
+fn extract_image_url(line: &str) -> Option<String> {
+    extract_markdown_image_url(line).or_else(|| extract_html_image_url(line))
+}
+
+fn extract_html_image_url(line: &str) -> Option<String> {
+    if !line.contains("<img") {
+        return None;
+    }
+    let src_index = line.find("src=\"")? + 5;
+    let end = line[src_index..].find('"')? + src_index;
+    let url = line[src_index..end].trim();
+    (!url.is_empty()).then(|| url.to_string())
 }
 
 fn is_supported_prompt_file(path: &str) -> bool {
@@ -1135,16 +1554,23 @@ fn source_id(url: &str) -> String {
 }
 
 fn source_name(url: &str) -> String {
-    parse_github_repo(url)
-        .map(|repo| repo.name)
-        .unwrap_or_else(|_| {
-            url.trim()
-                .trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .unwrap_or("Prompt Library")
-                .to_string()
-        })
+    match resolve_import_adapter(url) {
+        ImportAdapterKind::EvoLinkCases => "EvoLinkAI GPT Image 2 cases".to_string(),
+        ImportAdapterKind::FreestyleflyGallery => "freestylefly GPT Image 2 gallery".to_string(),
+        ImportAdapterKind::YouMindReadmeZh => "YouMind GPT Image 2 README_zh".to_string(),
+        ImportAdapterKind::Generic => {
+            parse_github_repo(url)
+                .map(|repo| repo.name)
+                .unwrap_or_else(|_| {
+                    url.trim()
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("Prompt Library")
+                        .to_string()
+                })
+        }
+    }
 }
 
 fn infer_model_hint(source_repo: &str) -> String {
@@ -1621,5 +2047,267 @@ Prompt: A warm coffee shop poster with morning light.
         );
 
         assert_eq!(cleaned, "一瓶高级香水置于反光玻璃上，柔和棚拍灯光。");
+    }
+
+    #[test]
+    fn normalizes_freestylefly_gallery_builtin_url() {
+        let info = classify_import_url(
+            "https://github.com/freestylefly/awesome-gpt-image-2/blob/main/docs/gallery.md?plain=1",
+        );
+
+        assert_eq!(info.source_type, "github_blob");
+        assert_eq!(info.normalized_url, FREESTYLEFLY_GALLERY_URL);
+    }
+
+    #[test]
+    fn normalizes_youmind_readme_zh_builtin_url() {
+        let info = classify_import_url(
+            "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README_zh.md",
+        );
+
+        assert_eq!(info.source_type, "github_blob");
+        assert_eq!(info.normalized_url, YOUMIND_README_ZH_URL);
+    }
+
+    #[test]
+    fn resolves_builtin_source_adapters() {
+        assert_eq!(
+            resolve_import_adapter(DEFAULT_GPT_IMAGE_2_CASES_URL),
+            ImportAdapterKind::EvoLinkCases
+        );
+        assert_eq!(
+            resolve_import_adapter(FREESTYLEFLY_GALLERY_URL),
+            ImportAdapterKind::FreestyleflyGallery
+        );
+        assert_eq!(
+            resolve_import_adapter(YOUMIND_README_ZH_URL),
+            ImportAdapterKind::YouMindReadmeZh
+        );
+        assert_eq!(
+            resolve_import_adapter("https://github.com/example/repo"),
+            ImportAdapterKind::Generic
+        );
+    }
+
+    #[test]
+    fn extracts_freestylefly_gallery_part_links_from_index() {
+        let markdown = r#"
+- [Part 1：例 1-165](./gallery-part-1.md)
+- [Part 2：例 166-427](./gallery-part-2.md)
+- [Part 1 duplicate](./gallery-part-1.md)
+"#;
+
+        let links = extract_freestylefly_gallery_part_links(markdown);
+
+        assert_eq!(
+            links,
+            vec![
+                FREESTYLEFLY_PART_1_RAW_URL.to_string(),
+                FREESTYLEFLY_PART_2_RAW_URL.to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_freestylefly_gallery_case_preferring_chinese_block() {
+        let markdown = r#"
+### 例 166：十二黄金圣斗士卡牌合集
+
+![十二黄金圣斗士卡牌合集](../data/images/case166.jpg)
+
+**来源：** someone
+
+**提示词：**
+
+```text
+[中文]
+生成圣斗士星矢12个黄金圣斗士的12宫格卡牌图片。
+
+[English]
+Generate a 12-grid card image of the 12 Gold Saints.
+```
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::FreestyleflyGallery,
+            FREESTYLEFLY_GALLERY_URL,
+            FREESTYLEFLY_PART_2_RAW_URL,
+            markdown,
+        )
+        .expect("freestylefly markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "十二黄金圣斗士卡牌合集");
+        assert_eq!(
+            items[0].prompt_original,
+            "生成圣斗士星矢12个黄金圣斗士的12宫格卡牌图片。"
+        );
+        assert!(!items[0].prompt_original.contains("English"));
+        assert_eq!(
+            items[0].preview_image_urls,
+            vec!["../data/images/case166.jpg".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_freestylefly_gallery_case_without_language_markers() {
+        let markdown = r#"
+### 例 1：信息图可视化设计
+
+**提示词：**
+
+```
+Vertical 9:16 isometric cutaway infographic.
+```
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::FreestyleflyGallery,
+            FREESTYLEFLY_GALLERY_URL,
+            FREESTYLEFLY_PART_1_RAW_URL,
+            markdown,
+        )
+        .expect("freestylefly markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].prompt_original,
+            "Vertical 9:16 isometric cutaway infographic."
+        );
+    }
+
+    #[test]
+    fn parses_youmind_readme_zh_prompt_json_as_raw_prompt() {
+        let markdown = r#"
+### No. 1: VR 头显爆炸视图海报
+
+#### 📖 描述
+
+生成一张高科技 VR 头显爆炸视图。
+
+#### 📝 提示词
+
+```json
+{
+  "type": "产品爆炸视图海报",
+  "subject": "VR 头显"
+}
+```
+
+#### 🖼️ 生成图片
+
+<img src="https://example.com/vr.jpg" width="700" alt="VR">
+
+#### 📌 详情
+
+- **作者:** someone
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::YouMindReadmeZh,
+            YOUMIND_README_ZH_URL,
+            "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README_zh.md",
+            markdown,
+        )
+        .expect("youmind markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "VR 头显爆炸视图海报");
+        assert!(items[0]
+            .prompt_original
+            .contains("\"type\": \"产品爆炸视图海报\""));
+        assert!(!items[0].prompt_original.contains("作者"));
+        assert_eq!(
+            items[0].preview_image_urls,
+            vec!["https://example.com/vr.jpg".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_multiple_youmind_cases() {
+        let markdown = r#"
+### No. 1: 第一个案例
+
+#### 📝 提示词
+
+```
+第一个提示词。
+```
+
+### No. 2: 第二个案例
+
+#### 📝 提示词
+
+```
+第二个提示词。
+```
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::YouMindReadmeZh,
+            YOUMIND_README_ZH_URL,
+            "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README_zh.md",
+            markdown,
+        )
+        .expect("youmind markdown should parse");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "第一个案例");
+        assert_eq!(items[1].title, "第二个案例");
+    }
+
+    #[test]
+    fn captures_youmind_preview_images_outside_prompt() {
+        let markdown = r#"
+### No. 3: 图片案例
+
+#### 📝 提示词
+
+```
+生成一张图片。
+```
+
+![preview](https://example.com/preview.png)
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::YouMindReadmeZh,
+            YOUMIND_README_ZH_URL,
+            "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README_zh.md",
+            markdown,
+        )
+        .expect("youmind markdown should parse");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].preview_image_urls,
+            vec!["https://example.com/preview.png".to_string()]
+        );
+        assert!(!items[0].prompt_original.contains("preview.png"));
+    }
+
+    #[test]
+    fn evolink_cases_adapter_uses_generic_parser_and_simplified_post_process() {
+        let markdown = r#"
+## Cases
+
+### 简体案例
+提示词：一只橙色小猫坐在窗边。
+
+### English Case
+Prompt: An orange kitten sitting by the window.
+"#;
+
+        let items = parse_prompt_document_for_adapter(
+            ImportAdapterKind::EvoLinkCases,
+            DEFAULT_GPT_IMAGE_2_CASES_URL,
+            "https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts/main/cases/demo.md",
+            markdown,
+        )
+        .expect("evolink markdown should parse");
+        let items = post_process_import_items(ImportAdapterKind::EvoLinkCases, items);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "简体案例");
     }
 }
