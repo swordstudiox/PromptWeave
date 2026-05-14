@@ -1,42 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-interface PromptTemplateDraft {
-  id: string;
-  title: string;
-  category: string;
-  sourceRepo: string;
-  sourceUrl: string;
-  promptOriginal: string;
-  negativePrompt?: string;
-  aspectRatio?: string;
-  tags: string[];
-}
-
-interface ImportPreview {
-  items: PromptTemplateDraft[];
-  warnings: string[];
-}
-
-interface ImportResult {
-  sourceId: string;
-  importedCount: number;
-  skippedCount: number;
-  warnings: string[];
-}
-
-interface PromptLibrarySourceRecord {
-  id: string;
-  name: string;
-  url: string;
-  sourceType: string;
-  lastSyncedAt?: string;
-  lastImportedCount: number;
-  lastSkippedCount: number;
-  lastError?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+import {
+  importPromptLibrary,
+  listPromptLibrarySources,
+  previewImportUrl,
+  syncPromptLibrarySource,
+} from "../lib/services/importService";
+import type { ImportPreview, ImportResult, PromptLibrarySourceRecord } from "../types/backend";
+import { EmptyState } from "./EmptyState";
+import { FeedbackMessage } from "./FeedbackMessage";
 
 function classifyGitHubUrl(url: string): string {
   if (url.includes("raw.githubusercontent.com")) return "GitHub raw 文件";
@@ -62,7 +33,7 @@ export function ImportPanel() {
 
   async function loadSources() {
     try {
-      const records = await invoke<PromptLibrarySourceRecord[]>("list_prompt_library_sources");
+      const records = await listPromptLibrarySources();
       setSources(records);
     } catch (err) {
       setError(String(err));
@@ -74,7 +45,7 @@ export function ImportPanel() {
     setError(null);
     setResult(null);
     try {
-      const nextPreview = await invoke<ImportPreview>("preview_import_url", { url });
+      const nextPreview = await previewImportUrl(url);
       setPreview(nextPreview);
     } catch (err) {
       setPreview(null);
@@ -88,7 +59,7 @@ export function ImportPanel() {
     setIsBusy(true);
     setError(null);
     try {
-      const importResult = await invoke<ImportResult>("import_prompt_library", { url });
+      const importResult = await importPromptLibrary(url);
       setResult(importResult);
       await loadSources();
     } catch (err) {
@@ -103,9 +74,7 @@ export function ImportPanel() {
     setError(null);
     setResult(null);
     try {
-      const syncResult = await invoke<ImportResult>("sync_prompt_library_source", {
-        sourceId: source.id,
-      });
+      const syncResult = await syncPromptLibrarySource(source.id);
       setResult(syncResult);
       await loadSources();
     } catch (err) {
@@ -135,12 +104,14 @@ export function ImportPanel() {
       <button disabled={isBusy || !preview?.items.length} onClick={importLibrary}>
         导入到本地库
       </button>
-      {error ? <p className="inline-error">{error}</p> : null}
-      {result ? (
-        <p className="inline-success">
-          已同步来源 {result.sourceId.slice(0, 8)}，导入 {result.importedCount} 条，跳过重复 {result.skippedCount} 条。
-        </p>
-      ) : null}
+      <div className="status-stack">
+        {error ? <FeedbackMessage variant="error">{error}</FeedbackMessage> : null}
+        {result ? (
+          <FeedbackMessage variant="success">
+            已同步来源 {result.sourceId.slice(0, 8)}，导入 {result.importedCount} 条，跳过重复 {result.skippedCount} 条。
+          </FeedbackMessage>
+        ) : null}
+      </div>
       {sources.length ? (
         <div className="source-list">
           <h3>已保存参考库：{sources.length}</h3>
@@ -177,26 +148,32 @@ export function ImportPanel() {
             </article>
           ))}
         </div>
-      ) : null}
+      ) : (
+        <EmptyState title="暂无参考库来源" description="导入或同步 GitHub 参考库后，保存的来源会显示在这里。" />
+      )}
       {preview?.warnings.length ? (
-        <div className="warning-list">
+        <FeedbackMessage variant="warning" className="warning-list">
           {preview.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
-        </div>
+        </FeedbackMessage>
       ) : null}
       {preview ? (
         <div className="import-preview">
           <h3>预览条目：{preview.items.length}</h3>
-          {preview.items.slice(0, 12).map((item) => (
-            <article key={item.id} className="template-row">
-              <strong>{item.title}</strong>
-              <span>{item.category || "未分类"}</span>
-              <p>{item.promptOriginal}</p>
-              {item.negativePrompt ? <small>Negative: {item.negativePrompt}</small> : null}
-              {item.aspectRatio ? <small>比例：{item.aspectRatio}</small> : null}
-            </article>
-          ))}
+          {preview.items.length ? (
+            preview.items.slice(0, 12).map((item) => (
+              <article key={item.id} className="template-row">
+                <strong>{item.title}</strong>
+                <span>{item.category || "未分类"}</span>
+                <p>{item.promptOriginal}</p>
+                {item.negativePrompt ? <small>Negative: {item.negativePrompt}</small> : null}
+                {item.aspectRatio ? <small>比例：{item.aspectRatio}</small> : null}
+              </article>
+            ))
+          ) : (
+            <EmptyState title="没有可导入条目" description="当前链接已识别，但没有解析出可导入的提示词。" />
+          )}
         </div>
       ) : null}
     </section>

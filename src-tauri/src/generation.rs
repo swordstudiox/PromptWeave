@@ -83,7 +83,11 @@ pub fn generate_image(
         } else {
             return Err("图片生成 API 响应缺少 b64_json 或 url。".to_string());
         };
-        image_paths.push(save_image_bytes(workspace_root, &bytes)?.display().to_string());
+        image_paths.push(
+            save_image_bytes(workspace_root, &bytes)?
+                .display()
+                .to_string(),
+        );
     }
 
     Ok(ImageGenerationResult {
@@ -106,11 +110,7 @@ pub fn build_image_request(config: &AppConfig, prompt: &str) -> Result<ImageRequ
     } else {
         ""
     };
-    let url = if provider.base_url.trim().is_empty() {
-        default_url.to_string()
-    } else {
-        provider.base_url.trim().trim_end_matches('/').to_string()
-    };
+    let url = build_image_endpoint_url(&provider.base_url, default_url, "images/generations");
     if url.is_empty() {
         return Err("自定义图片生成 API 需要填写 Base URL。".to_string());
     }
@@ -129,12 +129,56 @@ pub fn build_image_request(config: &AppConfig, prompt: &str) -> Result<ImageRequ
     })
 }
 
+fn build_image_endpoint_url(base_url: &str, default_url: &str, endpoint_path: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return default_url.to_string();
+    }
+
+    let endpoint_path = endpoint_path.trim_matches('/');
+    if base.ends_with(&format!("/{endpoint_path}")) {
+        return base.to_string();
+    }
+
+    let base = strip_image_endpoint_suffix(base);
+    let versioned_base = if base_has_path(base) {
+        base.to_string()
+    } else {
+        format!("{base}/v1")
+    };
+    format!("{versioned_base}/{endpoint_path}")
+}
+
+fn strip_image_endpoint_suffix(base_url: &str) -> &str {
+    if let Some(base) = base_url.strip_suffix("/images/generations") {
+        return base.trim_end_matches('/');
+    }
+    base_url
+}
+
+fn base_has_path(base_url: &str) -> bool {
+    let without_scheme = base_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_url);
+    without_scheme
+        .split_once('/')
+        .map(|(_, path)| !path.trim_matches('/').is_empty())
+        .unwrap_or(false)
+}
+
 fn save_image_bytes(workspace_root: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     let workspace = crate::workspace::ensure_workspace(workspace_root)?;
-    let image_dir = Path::new(&workspace.data_dir).join("history").join("images");
+    let image_dir = Path::new(&workspace.data_dir)
+        .join("history")
+        .join("images");
     fs::create_dir_all(&image_dir)
         .map_err(|err| format!("图片历史目录创建失败 {}: {err}", image_dir.display()))?;
-    let path = image_dir.join(format!("image-{}-{}.png", current_timestamp(), random_suffix()));
+    let path = image_dir.join(format!(
+        "image-{}-{}.png",
+        current_timestamp(),
+        random_suffix()
+    ));
     fs::write(&path, bytes).map_err(|err| format!("图片保存失败 {}: {err}", path.display()))?;
     Ok(path)
 }
@@ -179,10 +223,47 @@ mod tests {
             api_key: "sk-test".to_string(),
         };
 
-        let request = build_image_request(&config, "a cinematic cat").expect("request should build");
+        let request =
+            build_image_request(&config, "a cinematic cat").expect("request should build");
 
         assert_eq!(request.url, "https://api.openai.com/v1/images/generations");
         assert_eq!(request.model, "gpt-image-1.5");
         assert_eq!(request.prompt, "a cinematic cat");
+    }
+
+    #[test]
+    fn normalizes_compatible_image_generation_endpoint() {
+        for (base_url, expected_url) in [
+            (
+                "https://image.example.com",
+                "https://image.example.com/v1/images/generations",
+            ),
+            (
+                "https://image.example.com/v1",
+                "https://image.example.com/v1/images/generations",
+            ),
+            (
+                "https://image.example.com/v1/images/generations",
+                "https://image.example.com/v1/images/generations",
+            ),
+            (
+                "https://image.example.com/v1/",
+                "https://image.example.com/v1/images/generations",
+            ),
+        ] {
+            let mut config = AppConfig::default();
+            config.image_generation = ApiProviderConfig {
+                enabled: true,
+                provider: "compatible".to_string(),
+                base_url: base_url.to_string(),
+                model: "gpt-image-test".to_string(),
+                api_key: "sk-test".to_string(),
+            };
+
+            let request =
+                build_image_request(&config, "a cinematic cat").expect("request should build");
+
+            assert_eq!(request.url, expected_url);
+        }
     }
 }

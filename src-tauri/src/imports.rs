@@ -76,7 +76,9 @@ pub fn classify_import_url(url: &str) -> ImportUrlInfo {
 pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
     let source = classify_import_url(url);
     if !source.is_supported {
-        return Err("Unsupported import URL. Paste a GitHub repository, blob, or raw URL.".to_string());
+        return Err(
+            "Unsupported import URL. Paste a GitHub repository, blob, or raw URL.".to_string(),
+        );
     }
 
     let documents = fetch_import_documents(url)?;
@@ -94,10 +96,17 @@ pub fn preview_import_url(url: &str) -> Result<ImportPreview, String> {
         warnings.push("No prompt-like Markdown or JSON entries were found.".to_string());
     }
 
-    Ok(ImportPreview { source, items, warnings })
+    Ok(ImportPreview {
+        source,
+        items,
+        warnings,
+    })
 }
 
-pub fn import_prompt_library(workspace_root: &std::path::Path, url: &str) -> Result<ImportResult, String> {
+pub fn import_prompt_library(
+    workspace_root: &std::path::Path,
+    url: &str,
+) -> Result<ImportResult, String> {
     let preview = preview_import_url(url)?;
     let workspace = crate::workspace::ensure_workspace(workspace_root)?;
     db::bootstrap(std::path::Path::new(&workspace.database_path))?;
@@ -116,7 +125,13 @@ pub fn import_prompt_library(workspace_root: &std::path::Path, url: &str) -> Res
     )?;
     let imported_count = db::insert_prompt_templates(database_path, &preview.items)?;
     let skipped_count = preview.items.len().saturating_sub(imported_count);
-    db::record_prompt_library_source_success(database_path, &source_id, imported_count, skipped_count, &synced_at)?;
+    db::record_prompt_library_source_success(
+        database_path,
+        &source_id,
+        imported_count,
+        skipped_count,
+        &synced_at,
+    )?;
 
     Ok(ImportResult {
         source_id,
@@ -126,13 +141,18 @@ pub fn import_prompt_library(workspace_root: &std::path::Path, url: &str) -> Res
     })
 }
 
-pub fn list_prompt_library_sources(workspace_root: &std::path::Path) -> Result<Vec<db::PromptLibrarySourceRecord>, String> {
+pub fn list_prompt_library_sources(
+    workspace_root: &std::path::Path,
+) -> Result<Vec<db::PromptLibrarySourceRecord>, String> {
     let workspace = crate::workspace::ensure_workspace(workspace_root)?;
     db::bootstrap(std::path::Path::new(&workspace.database_path))?;
     db::list_prompt_library_sources(std::path::Path::new(&workspace.database_path))
 }
 
-pub fn sync_prompt_library_source(workspace_root: &std::path::Path, source_id: &str) -> Result<ImportResult, String> {
+pub fn sync_prompt_library_source(
+    workspace_root: &std::path::Path,
+    source_id: &str,
+) -> Result<ImportResult, String> {
     let workspace = crate::workspace::ensure_workspace(workspace_root)?;
     let database_path = std::path::Path::new(&workspace.database_path);
     db::bootstrap(database_path)?;
@@ -140,7 +160,12 @@ pub fn sync_prompt_library_source(workspace_root: &std::path::Path, source_id: &
     match import_prompt_library(workspace_root, &source.url) {
         Ok(result) => Ok(result),
         Err(err) => {
-            let _ = db::record_prompt_library_source_error(database_path, source_id, &err, &current_timestamp());
+            let _ = db::record_prompt_library_source_error(
+                database_path,
+                source_id,
+                &err,
+                &current_timestamp(),
+            );
             Err(err)
         }
     }
@@ -151,14 +176,21 @@ pub fn parse_prompt_document(
     source_url: &str,
     content: &str,
 ) -> Result<Vec<PromptTemplateDraft>, String> {
-    if source_url.to_ascii_lowercase().ends_with(".json") || content.trim_start().starts_with('[') || content.trim_start().starts_with('{') {
+    if source_url.to_ascii_lowercase().ends_with(".json")
+        || content.trim_start().starts_with('[')
+        || content.trim_start().starts_with('{')
+    {
         return parse_json_prompts(source_repo, source_url, content);
     }
 
     Ok(parse_markdown_prompts(source_repo, source_url, content))
 }
 
-fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) -> Vec<PromptTemplateDraft> {
+fn parse_markdown_prompts(
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Vec<PromptTemplateDraft> {
     let mut current_category = String::new();
     let mut current_title = String::new();
     let mut current_prompt: Option<String> = None;
@@ -249,13 +281,28 @@ fn parse_markdown_prompts(source_repo: &str, source_url: &str, content: &str) ->
 
         if let Some(value) = extract_labeled_value(
             line,
-            &["Negative Prompts:", "Negative Prompt:", "Negative:", "负面提示词：", "负面提示词:"],
+            &[
+                "Negative Prompts:",
+                "Negative Prompt:",
+                "Negative:",
+                "负面提示词：",
+                "负面提示词:",
+            ],
         ) {
             current_negative = Some(value);
             continue;
         }
 
-        if let Some(value) = extract_labeled_value(line, &["Aspect Ratio:", "Aspect ratio:", "Ratio:", "比例：", "比例:"]) {
+        if let Some(value) = extract_labeled_value(
+            line,
+            &[
+                "Aspect Ratio:",
+                "Aspect ratio:",
+                "Ratio:",
+                "比例：",
+                "比例:",
+            ],
+        ) {
             current_aspect = Some(value);
             continue;
         }
@@ -296,7 +343,11 @@ fn flush_markdown_item(
         let mut draft = build_prompt_draft(
             source_repo,
             source_url,
-            if title.is_empty() { "Imported Prompt" } else { title },
+            if title.is_empty() {
+                "Imported Prompt"
+            } else {
+                title
+            },
             category,
             prompt_original,
             negative_prompt.take(),
@@ -309,8 +360,13 @@ fn flush_markdown_item(
     }
 }
 
-fn parse_json_prompts(source_repo: &str, source_url: &str, content: &str) -> Result<Vec<PromptTemplateDraft>, String> {
-    let value: Value = serde_json::from_str(content).map_err(|err| format!("Invalid JSON: {err}"))?;
+fn parse_json_prompts(
+    source_repo: &str,
+    source_url: &str,
+    content: &str,
+) -> Result<Vec<PromptTemplateDraft>, String> {
+    let value: Value =
+        serde_json::from_str(content).map_err(|err| format!("Invalid JSON: {err}"))?;
     let mut items = Vec::new();
     collect_json_prompts(source_repo, source_url, &value, "", &mut items);
     Ok(items)
@@ -330,11 +386,30 @@ fn collect_json_prompts(
             }
         }
         Value::Object(map) => {
-            let prompt = string_field(map, &["prompt", "promptOriginal", "prompt_original", "text", "content"]);
+            let prompt = string_field(
+                map,
+                &[
+                    "prompt",
+                    "promptOriginal",
+                    "prompt_original",
+                    "text",
+                    "content",
+                ],
+            );
             if let Some(prompt_original) = prompt {
-                let title = string_field(map, &["title", "name"]).unwrap_or_else(|| "Imported Prompt".to_string());
-                let category = string_field(map, &["category", "type"]).unwrap_or_else(|| category_hint.to_string());
-                let negative_prompt = string_field(map, &["negativePrompt", "negative_prompt", "negative", "negativePrompts"]);
+                let title = string_field(map, &["title", "name"])
+                    .unwrap_or_else(|| "Imported Prompt".to_string());
+                let category = string_field(map, &["category", "type"])
+                    .unwrap_or_else(|| category_hint.to_string());
+                let negative_prompt = string_field(
+                    map,
+                    &[
+                        "negativePrompt",
+                        "negative_prompt",
+                        "negative",
+                        "negativePrompts",
+                    ],
+                );
                 let aspect_ratio = string_field(map, &["aspectRatio", "aspect_ratio", "ratio"]);
                 let tags = tags_field(map.get("tags"));
                 items.push(build_prompt_draft(
@@ -405,7 +480,13 @@ fn fetch_import_documents(url: &str) -> Result<Vec<ImportDocument>, String> {
             content: http_get_text(url)?,
         }]),
         "github_blob" => {
-            let raw_url = github_blob_to_raw(url)?;
+            let repo = parse_github_repo(url)?;
+            let ref_candidates = fetch_github_ref_candidates(&repo).unwrap_or_default();
+            let raw_url = if ref_candidates.is_empty() {
+                github_blob_to_raw(url)?
+            } else {
+                github_blob_to_raw_with_refs(url, &ref_candidates)?
+            };
             Ok(vec![ImportDocument {
                 url: raw_url.clone(),
                 content: http_get_text(&raw_url)?,
@@ -424,7 +505,11 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
         .get("default_branch")
         .and_then(Value::as_str)
         .unwrap_or("main");
-    let selection = parse_github_tree_selection(url, default_branch)?;
+    let mut ref_candidates = fetch_github_branch_names(&repo).unwrap_or_default();
+    if !ref_candidates.iter().any(|branch| branch == default_branch) {
+        ref_candidates.push(default_branch.to_string());
+    }
+    let selection = parse_github_tree_selection_with_refs(url, default_branch, &ref_candidates)?;
     let branch = selection.branch.as_deref().unwrap_or(default_branch);
 
     let tree_url = format!(
@@ -454,7 +539,10 @@ fn fetch_github_repo_documents(url: &str) -> Result<Vec<ImportDocument>, String>
                 repo.owner, repo.name, branch, path
             );
             if let Ok(content) = http_get_text(&raw_url) {
-                documents.push(ImportDocument { url: raw_url, content });
+                documents.push(ImportDocument {
+                    url: raw_url,
+                    content,
+                });
             }
             if documents.len() >= 20 {
                 break;
@@ -501,51 +589,89 @@ fn parse_github_repo(url: &str) -> Result<GitHubRepo, String> {
     };
     let rest = &without_query[index + marker.len()..];
     let mut parts = rest.split('/').filter(|part| !part.is_empty());
-    let owner = parts.next().ok_or_else(|| "GitHub owner missing.".to_string())?;
-    let name = parts.next().ok_or_else(|| "GitHub repository missing.".to_string())?;
+    let owner = parts
+        .next()
+        .ok_or_else(|| "GitHub owner missing.".to_string())?;
+    let name = parts
+        .next()
+        .ok_or_else(|| "GitHub repository missing.".to_string())?;
     Ok(GitHubRepo {
         owner: owner.to_string(),
         name: name.trim_end_matches(".git").to_string(),
     })
 }
 
-fn parse_github_tree_selection(url: &str, default_branch: &str) -> Result<GitHubTreeSelection, String> {
+fn parse_github_tree_selection(
+    url: &str,
+    default_branch: &str,
+) -> Result<GitHubTreeSelection, String> {
+    parse_github_tree_selection_with_refs(url, default_branch, &[default_branch.to_string()])
+}
+
+fn parse_github_tree_selection_with_refs(
+    url: &str,
+    default_branch: &str,
+    ref_candidates: &[String],
+) -> Result<GitHubTreeSelection, String> {
     let Some((_, tree_rest)) = url.split_once("/tree/") else {
         return Ok(GitHubTreeSelection::default());
     };
-    let rest = tree_rest
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(tree_rest)
-        .trim_matches('/');
+    let rest = clean_github_ref_rest(tree_rest);
     if rest.is_empty() {
         return Ok(GitHubTreeSelection::default());
     }
 
-    if rest == default_branch {
-        return Ok(GitHubTreeSelection {
-            branch: Some(default_branch.to_string()),
-            path_prefix: None,
-        });
+    let mut candidates = ref_candidates.to_vec();
+    if !candidates.iter().any(|branch| branch == default_branch) {
+        candidates.push(default_branch.to_string());
     }
 
-    let default_branch_prefix = format!("{default_branch}/");
-    if let Some(path_prefix) = rest.strip_prefix(&default_branch_prefix) {
-        return Ok(GitHubTreeSelection {
-            branch: Some(default_branch.to_string()),
-            path_prefix: clean_tree_path(path_prefix),
-        });
+    let (branch, path_prefix) = split_github_ref_path(&rest, &candidates)
+        .ok_or_else(|| "GitHub tree branch missing.".to_string())?;
+    Ok(GitHubTreeSelection {
+        branch: Some(branch),
+        path_prefix: path_prefix.and_then(|path| clean_tree_path(&path)),
+    })
+}
+
+fn clean_github_ref_rest(rest: &str) -> String {
+    rest.split(['?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .trim_matches('/')
+        .to_string()
+}
+
+fn split_github_ref_path(
+    rest: &str,
+    ref_candidates: &[String],
+) -> Option<(String, Option<String>)> {
+    let rest = rest.trim_matches('/');
+    if rest.is_empty() {
+        return None;
+    }
+
+    if let Some(branch) = ref_candidates
+        .iter()
+        .map(|branch| branch.trim_matches('/'))
+        .filter(|branch| !branch.is_empty())
+        .filter(|branch| rest == *branch || rest.starts_with(&format!("{branch}/")))
+        .max_by_key(|branch| branch.len())
+    {
+        let path = rest
+            .strip_prefix(branch)
+            .unwrap_or_default()
+            .trim_start_matches('/');
+        return Some((
+            branch.to_string(),
+            (!path.is_empty()).then(|| path.to_string()),
+        ));
     }
 
     let mut parts = rest.splitn(2, '/');
-    let branch = parts
-        .next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "GitHub tree branch missing.".to_string())?;
-    Ok(GitHubTreeSelection {
-        branch: Some(branch.to_string()),
-        path_prefix: parts.next().and_then(clean_tree_path),
-    })
+    let branch = parts.next()?.to_string();
+    let path = parts.next().map(ToOwned::to_owned);
+    Some((branch, path))
 }
 
 fn clean_tree_path(path: &str) -> Option<String> {
@@ -554,19 +680,54 @@ fn clean_tree_path(path: &str) -> Option<String> {
 }
 
 fn github_blob_to_raw(url: &str) -> Result<String, String> {
+    github_blob_to_raw_with_refs(url, &[])
+}
+
+fn github_blob_to_raw_with_refs(url: &str, ref_candidates: &[String]) -> Result<String, String> {
     let repo = parse_github_repo(url)?;
     let marker = "/blob/";
     let Some(index) = url.find(marker) else {
         return Err("GitHub blob URL is missing /blob/.".to_string());
     };
-    let rest = &url[index + marker.len()..];
-    let mut parts = rest.splitn(2, '/');
-    let branch = parts.next().ok_or_else(|| "GitHub blob branch missing.".to_string())?;
-    let path = parts.next().ok_or_else(|| "GitHub blob path missing.".to_string())?;
+    let rest = clean_github_ref_rest(&url[index + marker.len()..]);
+    let (branch, path) = split_github_ref_path(&rest, ref_candidates)
+        .ok_or_else(|| "GitHub blob branch missing.".to_string())?;
+    let path = path.ok_or_else(|| "GitHub blob path missing.".to_string())?;
     Ok(format!(
         "https://raw.githubusercontent.com/{}/{}/{}/{}",
         repo.owner, repo.name, branch, path
     ))
+}
+
+fn fetch_github_ref_candidates(repo: &GitHubRepo) -> Result<Vec<String>, String> {
+    let metadata_url = format!("https://api.github.com/repos/{}/{}", repo.owner, repo.name);
+    let metadata: Value = http_get_json(&metadata_url)?;
+    let mut candidates = fetch_github_branch_names(repo).unwrap_or_default();
+    if let Some(default_branch) = metadata.get("default_branch").and_then(Value::as_str) {
+        if !candidates.iter().any(|branch| branch == default_branch) {
+            candidates.push(default_branch.to_string());
+        }
+    }
+    Ok(candidates)
+}
+
+fn fetch_github_branch_names(repo: &GitHubRepo) -> Result<Vec<String>, String> {
+    let branches_url = format!(
+        "https://api.github.com/repos/{}/{}/branches?per_page=100",
+        repo.owner, repo.name
+    );
+    let branches: Value = http_get_json(&branches_url)?;
+    let names = branches
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(Value::as_str))
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(names)
 }
 
 fn http_get_text(url: &str) -> Result<String, String> {
@@ -677,7 +838,14 @@ fn source_id(url: &str) -> String {
 fn source_name(url: &str) -> String {
     parse_github_repo(url)
         .map(|repo| repo.name)
-        .unwrap_or_else(|_| url.trim().trim_end_matches('/').rsplit('/').next().unwrap_or("Prompt Library").to_string())
+        .unwrap_or_else(|_| {
+            url.trim()
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("Prompt Library")
+                .to_string()
+        })
 }
 
 fn infer_model_hint(source_repo: &str) -> String {
@@ -692,7 +860,10 @@ fn infer_model_hint(source_repo: &str) -> String {
 }
 
 fn infer_language(prompt: &str) -> String {
-    if prompt.chars().any(|char| ('\u{4e00}'..='\u{9fff}').contains(&char)) {
+    if prompt
+        .chars()
+        .any(|char| ('\u{4e00}'..='\u{9fff}').contains(&char))
+    {
         "zh".to_string()
     } else {
         "en".to_string()
@@ -733,14 +904,69 @@ mod tests {
 
     #[test]
     fn parses_github_tree_subdirectory_on_custom_branch() {
-        let selection = parse_github_tree_selection(
-            "https://github.com/example/repo/tree/dev/prompts",
-            "main",
-        )
-        .expect("tree selection should parse");
+        let selection =
+            parse_github_tree_selection("https://github.com/example/repo/tree/dev/prompts", "main")
+                .expect("tree selection should parse");
 
         assert_eq!(selection.branch.as_deref(), Some("dev"));
         assert_eq!(selection.path_prefix.as_deref(), Some("prompts"));
+    }
+
+    #[test]
+    fn parses_tree_url_with_slash_branch_and_directory() {
+        let candidates = vec!["feature/import-fix".to_string()];
+        let selection = parse_github_tree_selection_with_refs(
+            "https://github.com/example/repo/tree/feature/import-fix/prompts",
+            "main",
+            &candidates,
+        )
+        .expect("tree selection should parse");
+
+        assert_eq!(selection.branch.as_deref(), Some("feature/import-fix"));
+        assert_eq!(selection.path_prefix.as_deref(), Some("prompts"));
+    }
+
+    #[test]
+    fn parses_tree_url_with_deep_slash_branch_and_file_path() {
+        let candidates = vec!["release/2026/05".to_string()];
+        let selection = parse_github_tree_selection_with_refs(
+            "https://github.com/example/repo/tree/release/2026/05/docs/a.md",
+            "main",
+            &candidates,
+        )
+        .expect("tree selection should parse");
+
+        assert_eq!(selection.branch.as_deref(), Some("release/2026/05"));
+        assert_eq!(selection.path_prefix.as_deref(), Some("docs/a.md"));
+    }
+
+    #[test]
+    fn chooses_longest_branch_candidate_when_prefixes_overlap() {
+        let candidates = vec!["feature".to_string(), "feature/import-fix".to_string()];
+        let selection = parse_github_tree_selection_with_refs(
+            "https://github.com/example/repo/tree/feature/import-fix/prompts",
+            "main",
+            &candidates,
+        )
+        .expect("tree selection should parse");
+
+        assert_eq!(selection.branch.as_deref(), Some("feature/import-fix"));
+        assert_eq!(selection.path_prefix.as_deref(), Some("prompts"));
+    }
+
+    #[test]
+    fn converts_blob_url_with_slash_branch_to_raw_url() {
+        let candidates = vec!["feature/import-fix".to_string()];
+        let raw_url = github_blob_to_raw_with_refs(
+            "https://github.com/example/repo/blob/feature/import-fix/prompts/a.md",
+            &candidates,
+        )
+        .expect("blob URL should convert");
+
+        assert_eq!(
+            raw_url,
+            "https://raw.githubusercontent.com/example/repo/feature/import-fix/prompts/a.md"
+        );
     }
 
     #[test]
@@ -773,7 +999,10 @@ Aspect Ratio: 16:9
             items[0].prompt_original,
             "A young girl wearing a red cloak standing on a snowy mountain peak."
         );
-        assert_eq!(items[0].negative_prompt.as_deref(), Some("blurry, watermark"));
+        assert_eq!(
+            items[0].negative_prompt.as_deref(),
+            Some("blurry, watermark")
+        );
         assert_eq!(items[0].aspect_ratio.as_deref(), Some("16:9"));
     }
 
@@ -802,8 +1031,14 @@ Aspect Ratio: 16:9
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Product Poster");
         assert_eq!(items[0].category, "Poster");
-        assert_eq!(items[0].prompt_original, "A premium perfume bottle on reflective glass.");
-        assert_eq!(items[0].tags, vec!["product".to_string(), "poster".to_string()]);
+        assert_eq!(
+            items[0].prompt_original,
+            "A premium perfume bottle on reflective glass."
+        );
+        assert_eq!(
+            items[0].tags,
+            vec!["product".to_string(), "poster".to_string()]
+        );
     }
 
     #[test]
@@ -832,8 +1067,14 @@ Negative Prompt: low quality
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Neon Samurai");
         assert_eq!(items[0].author.as_deref(), Some("@artist"));
-        assert_eq!(items[0].prompt_original, "A neon samurai standing in the rain, cinematic lighting.");
-        assert_eq!(items[0].preview_image_urls, vec!["https://example.com/neon.png".to_string()]);
+        assert_eq!(
+            items[0].prompt_original,
+            "A neon samurai standing in the rain, cinematic lighting."
+        );
+        assert_eq!(
+            items[0].preview_image_urls,
+            vec!["https://example.com/neon.png".to_string()]
+        );
     }
 
     #[test]
@@ -863,7 +1104,10 @@ A cinematic poster for a tea brand.
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Poster Prompt");
-        assert_eq!(items[0].prompt_original, "A cinematic poster for a tea brand.");
+        assert_eq!(
+            items[0].prompt_original,
+            "A cinematic poster for a tea brand."
+        );
     }
 
     #[test]

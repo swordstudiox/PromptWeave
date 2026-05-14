@@ -1,26 +1,17 @@
 import { useEffect, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ExportFormat } from "../lib/exportFormats";
+import { listGenerationHistory } from "../lib/services/creatorService";
+import type { GenerationHistoryRecord } from "../types/backend";
 import { defaultCreationSettings, type CreationSettings } from "../types/prompt";
+import { EmptyState } from "./EmptyState";
+import { FeedbackMessage } from "./FeedbackMessage";
 
 export interface HistoryLoadPayload {
   input: string;
   format: ExportFormat;
   settings: CreationSettings;
   imagePaths: string[];
-}
-
-interface GenerationHistoryRecord {
-  id: string;
-  userInput: string;
-  promptZh: string;
-  promptEn: string;
-  exportFormat: ExportFormat;
-  matchedTemplates: string[];
-  settingsJson: string;
-  imagePath?: string;
-  imagePaths: string[];
-  createdAt: string;
 }
 
 function parseHistorySettings(settingsJson: string): CreationSettings {
@@ -44,7 +35,7 @@ export function HistoryPanel({ onLoad }: { onLoad: (payload: HistoryLoadPayload)
     setIsLoading(true);
     setError(null);
     try {
-      const history = await invoke<GenerationHistoryRecord[]>("list_generation_history", { limit: 50 });
+      const history = await listGenerationHistory(50);
       setRecords(history);
     } catch (err) {
       setError(String(err));
@@ -65,8 +56,12 @@ export function HistoryPanel({ onLoad }: { onLoad: (payload: HistoryLoadPayload)
           {isLoading ? "刷新中..." : "刷新"}
         </button>
       </div>
-      {error ? <p className="inline-error">{error}</p> : null}
-      {!records.length && !isLoading ? <p>还没有历史记录。复制提示词、API 优化或生成图片后会自动记录。</p> : null}
+      <div className="status-stack">
+        {error ? <FeedbackMessage variant="error">{error}</FeedbackMessage> : null}
+      </div>
+      {!records.length && !isLoading ? (
+        <EmptyState title="还没有历史记录" description="复制提示词、API 优化或生成图片后会自动记录。" />
+      ) : null}
       <div className="template-list">
         {records.map((record) => (
           <article key={record.id} className="template-row">

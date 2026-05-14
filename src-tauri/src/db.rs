@@ -213,27 +213,43 @@ pub fn bootstrap(database_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_column(connection: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table})"))
         .map_err(|err| format!("Failed to inspect {table} schema: {err}"))?;
     let mut rows = statement
         .query([])
         .map_err(|err| format!("Failed to read {table} schema: {err}"))?;
-    while let Some(row) = rows.next().map_err(|err| format!("Failed to read {table} column: {err}"))? {
-        let name: String = row.get(1).map_err(|err| format!("Failed to read {table} column name: {err}"))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to read {table} column: {err}"))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|err| format!("Failed to read {table} column name: {err}"))?;
         if name == column {
             return Ok(());
         }
     }
 
     connection
-        .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
+        .execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )
         .map_err(|err| format!("Failed to add {table}.{column}: {err}"))?;
     Ok(())
 }
 
-pub fn list_prompt_templates(database_path: &Path, limit: usize) -> Result<Vec<PromptTemplateRecord>, String> {
+pub fn list_prompt_templates(
+    database_path: &Path,
+    limit: usize,
+) -> Result<Vec<PromptTemplateRecord>, String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let mut statement = connection
@@ -255,7 +271,11 @@ pub fn list_prompt_templates(database_path: &Path, limit: usize) -> Result<Vec<P
     collect_template_rows(rows)
 }
 
-pub fn search_prompt_templates(database_path: &Path, query: &str, limit: usize) -> Result<Vec<PromptTemplateRecord>, String> {
+pub fn search_prompt_templates(
+    database_path: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<PromptTemplateRecord>, String> {
     if query.trim().is_empty() {
         return list_prompt_templates(database_path, limit);
     }
@@ -278,31 +298,66 @@ pub fn search_prompt_templates(database_path: &Path, query: &str, limit: usize) 
         .map_err(|err| format!("Failed to prepare template search query: {err}"))?;
 
     let fts_query = sanitize_fts_query(query);
+    if fts_query.is_empty() {
+        return list_prompt_templates(database_path, limit);
+    }
+
     let rows = statement
         .query(params![fts_query, limit])
         .map_err(|err| format!("Failed to search templates: {err}"))?;
     collect_template_rows(rows)
 }
 
-fn collect_template_rows(mut rows: rusqlite::Rows<'_>) -> Result<Vec<PromptTemplateRecord>, String> {
+fn collect_template_rows(
+    mut rows: rusqlite::Rows<'_>,
+) -> Result<Vec<PromptTemplateRecord>, String> {
     let mut templates = Vec::new();
-    while let Some(row) = rows.next().map_err(|err| format!("Failed to read template row: {err}"))? {
-        let tags_json: String = row.get(10).map_err(|err| format!("Failed to read tags JSON: {err}"))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to read template row: {err}"))?
+    {
+        let tags_json: String = row
+            .get(10)
+            .map_err(|err| format!("Failed to read tags JSON: {err}"))?;
         let tags = serde_json::from_str(&tags_json).unwrap_or_default();
-        let is_favorite: i64 = row.get(12).map_err(|err| format!("Failed to read favorite state: {err}"))?;
+        let is_favorite: i64 = row
+            .get(12)
+            .map_err(|err| format!("Failed to read favorite state: {err}"))?;
         templates.push(PromptTemplateRecord {
-            id: row.get(0).map_err(|err| format!("Failed to read id: {err}"))?,
-            title: row.get(1).map_err(|err| format!("Failed to read title: {err}"))?,
-            category: row.get(2).map_err(|err| format!("Failed to read category: {err}"))?,
-            source_repo: row.get(3).map_err(|err| format!("Failed to read source repo: {err}"))?,
-            source_url: row.get(4).map_err(|err| format!("Failed to read source url: {err}"))?,
-            model_hint: row.get(5).map_err(|err| format!("Failed to read model hint: {err}"))?,
-            language: row.get(6).map_err(|err| format!("Failed to read language: {err}"))?,
-            prompt_original: row.get(7).map_err(|err| format!("Failed to read prompt: {err}"))?,
-            negative_prompt: row.get(8).map_err(|err| format!("Failed to read negative prompt: {err}"))?,
-            aspect_ratio: row.get(9).map_err(|err| format!("Failed to read aspect ratio: {err}"))?,
+            id: row
+                .get(0)
+                .map_err(|err| format!("Failed to read id: {err}"))?,
+            title: row
+                .get(1)
+                .map_err(|err| format!("Failed to read title: {err}"))?,
+            category: row
+                .get(2)
+                .map_err(|err| format!("Failed to read category: {err}"))?,
+            source_repo: row
+                .get(3)
+                .map_err(|err| format!("Failed to read source repo: {err}"))?,
+            source_url: row
+                .get(4)
+                .map_err(|err| format!("Failed to read source url: {err}"))?,
+            model_hint: row
+                .get(5)
+                .map_err(|err| format!("Failed to read model hint: {err}"))?,
+            language: row
+                .get(6)
+                .map_err(|err| format!("Failed to read language: {err}"))?,
+            prompt_original: row
+                .get(7)
+                .map_err(|err| format!("Failed to read prompt: {err}"))?,
+            negative_prompt: row
+                .get(8)
+                .map_err(|err| format!("Failed to read negative prompt: {err}"))?,
+            aspect_ratio: row
+                .get(9)
+                .map_err(|err| format!("Failed to read aspect ratio: {err}"))?,
             tags,
-            imported_at: row.get(11).map_err(|err| format!("Failed to read imported_at: {err}"))?,
+            imported_at: row
+                .get(11)
+                .map_err(|err| format!("Failed to read imported_at: {err}"))?,
             is_favorite: is_favorite != 0,
         });
     }
@@ -319,7 +374,10 @@ fn sanitize_fts_query(query: &str) -> String {
         .join(" OR ")
 }
 
-pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraft]) -> Result<usize, String> {
+pub fn insert_prompt_templates(
+    database_path: &Path,
+    items: &[PromptTemplateDraft],
+) -> Result<usize, String> {
     let mut connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let transaction = connection
@@ -356,7 +414,8 @@ pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraf
             .map_err(|err| format!("Failed to prepare import statement: {err}"))?;
 
         for item in items {
-            let tags_json = serde_json::to_string(&item.tags).map_err(|err| format!("Failed to serialize tags: {err}"))?;
+            let tags_json = serde_json::to_string(&item.tags)
+                .map_err(|err| format!("Failed to serialize tags: {err}"))?;
             let preview_image_urls_json = serde_json::to_string(&item.preview_image_urls)
                 .map_err(|err| format!("Failed to serialize preview URLs: {err}"))?;
             let changed = statement
@@ -380,7 +439,9 @@ pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraf
                     &item.imported_at,
                     &item.content_hash,
                 ])
-                .map_err(|err| format!("Failed to insert prompt template '{}': {err}", item.title))?;
+                .map_err(|err| {
+                    format!("Failed to insert prompt template '{}': {err}", item.title)
+                })?;
             inserted += changed;
         }
     }
@@ -391,10 +452,14 @@ pub fn insert_prompt_templates(database_path: &Path, items: &[PromptTemplateDraf
     Ok(inserted)
 }
 
-pub fn update_prompt_template(database_path: &Path, draft: &TemplateUpdateDraft) -> Result<(), String> {
+pub fn update_prompt_template(
+    database_path: &Path,
+    draft: &TemplateUpdateDraft,
+) -> Result<(), String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
-    let tags_json = serde_json::to_string(&draft.tags).map_err(|err| format!("Failed to serialize tags: {err}"))?;
+    let tags_json = serde_json::to_string(&draft.tags)
+        .map_err(|err| format!("Failed to serialize tags: {err}"))?;
     let changed = connection
         .execute(
             r#"
@@ -425,7 +490,11 @@ pub fn update_prompt_template(database_path: &Path, draft: &TemplateUpdateDraft)
     Ok(())
 }
 
-pub fn toggle_prompt_template_favorite(database_path: &Path, id: &str, is_favorite: bool) -> Result<(), String> {
+pub fn toggle_prompt_template_favorite(
+    database_path: &Path,
+    id: &str,
+    is_favorite: bool,
+) -> Result<(), String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let changed = connection
@@ -465,7 +534,10 @@ pub fn archive_prompt_template(database_path: &Path, id: &str) -> Result<(), Str
     Ok(())
 }
 
-pub fn upsert_prompt_library_source(database_path: &Path, draft: &PromptLibrarySourceDraft) -> Result<(), String> {
+pub fn upsert_prompt_library_source(
+    database_path: &Path,
+    draft: &PromptLibrarySourceDraft,
+) -> Result<(), String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     connection
@@ -484,9 +556,20 @@ pub fn upsert_prompt_library_source(database_path: &Path, draft: &PromptLibraryS
               source_type = excluded.source_type,
               updated_at = excluded.updated_at
             "#,
-            params![&draft.id, &draft.name, &draft.url, &draft.source_type, &draft.created_at],
+            params![
+                &draft.id,
+                &draft.name,
+                &draft.url,
+                &draft.source_type,
+                &draft.created_at
+            ],
         )
-        .map_err(|err| format!("Failed to upsert prompt library source '{}': {err}", draft.url))?;
+        .map_err(|err| {
+            format!(
+                "Failed to upsert prompt library source '{}': {err}",
+                draft.url
+            )
+        })?;
     Ok(())
 }
 
@@ -545,7 +628,9 @@ pub fn record_prompt_library_source_error(
     Ok(())
 }
 
-pub fn list_prompt_library_sources(database_path: &Path) -> Result<Vec<PromptLibrarySourceRecord>, String> {
+pub fn list_prompt_library_sources(
+    database_path: &Path,
+) -> Result<Vec<PromptLibrarySourceRecord>, String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let mut statement = connection
@@ -564,27 +649,53 @@ pub fn list_prompt_library_sources(database_path: &Path) -> Result<Vec<PromptLib
         .map_err(|err| format!("Failed to query prompt library sources: {err}"))?;
     let mut sources = Vec::new();
 
-    while let Some(row) = rows.next().map_err(|err| format!("Failed to read source row: {err}"))? {
-        let imported_count: i64 = row.get(5).map_err(|err| format!("Failed to read imported count: {err}"))?;
-        let skipped_count: i64 = row.get(6).map_err(|err| format!("Failed to read skipped count: {err}"))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to read source row: {err}"))?
+    {
+        let imported_count: i64 = row
+            .get(5)
+            .map_err(|err| format!("Failed to read imported count: {err}"))?;
+        let skipped_count: i64 = row
+            .get(6)
+            .map_err(|err| format!("Failed to read skipped count: {err}"))?;
         sources.push(PromptLibrarySourceRecord {
-            id: row.get(0).map_err(|err| format!("Failed to read source id: {err}"))?,
-            name: row.get(1).map_err(|err| format!("Failed to read source name: {err}"))?,
-            url: row.get(2).map_err(|err| format!("Failed to read source url: {err}"))?,
-            source_type: row.get(3).map_err(|err| format!("Failed to read source type: {err}"))?,
-            last_synced_at: row.get(4).map_err(|err| format!("Failed to read last synced at: {err}"))?,
+            id: row
+                .get(0)
+                .map_err(|err| format!("Failed to read source id: {err}"))?,
+            name: row
+                .get(1)
+                .map_err(|err| format!("Failed to read source name: {err}"))?,
+            url: row
+                .get(2)
+                .map_err(|err| format!("Failed to read source url: {err}"))?,
+            source_type: row
+                .get(3)
+                .map_err(|err| format!("Failed to read source type: {err}"))?,
+            last_synced_at: row
+                .get(4)
+                .map_err(|err| format!("Failed to read last synced at: {err}"))?,
             last_imported_count: imported_count.max(0) as usize,
             last_skipped_count: skipped_count.max(0) as usize,
-            last_error: row.get(7).map_err(|err| format!("Failed to read source error: {err}"))?,
-            created_at: row.get(8).map_err(|err| format!("Failed to read source created_at: {err}"))?,
-            updated_at: row.get(9).map_err(|err| format!("Failed to read source updated_at: {err}"))?,
+            last_error: row
+                .get(7)
+                .map_err(|err| format!("Failed to read source error: {err}"))?,
+            created_at: row
+                .get(8)
+                .map_err(|err| format!("Failed to read source created_at: {err}"))?,
+            updated_at: row
+                .get(9)
+                .map_err(|err| format!("Failed to read source updated_at: {err}"))?,
         });
     }
 
     Ok(sources)
 }
 
-pub fn get_prompt_library_source(database_path: &Path, id: &str) -> Result<PromptLibrarySourceRecord, String> {
+pub fn get_prompt_library_source(
+    database_path: &Path,
+    id: &str,
+) -> Result<PromptLibrarySourceRecord, String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let mut statement = connection
@@ -623,10 +734,8 @@ mod tests {
     use super::*;
 
     fn test_database_path(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "promptweave-{name}-{}.sqlite",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("promptweave-{name}-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
     }
@@ -673,7 +782,34 @@ mod tests {
         bootstrap(&database_path).expect("database should bootstrap");
         insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
 
-        let templates = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+        let templates =
+            search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].title, "Snow Portrait");
+    }
+
+    #[test]
+    fn symbol_only_search_falls_back_to_list() {
+        let database_path = test_database_path("symbol-search");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        let templates = search_prompt_templates(&database_path, "!!!", 20)
+            .expect("templates should fall back to list");
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].title, "Snow Portrait");
+    }
+
+    #[test]
+    fn mixed_symbol_search_keeps_valid_tokens() {
+        let database_path = test_database_path("mixed-symbol-search");
+        bootstrap(&database_path).expect("database should bootstrap");
+        insert_prompt_templates(&database_path, &[draft()]).expect("template should insert");
+
+        let templates = search_prompt_templates(&database_path, "!!! snowy ???", 20)
+            .expect("templates should search valid tokens");
 
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].title, "Snow Portrait");
@@ -688,7 +824,8 @@ mod tests {
         let initial = list_prompt_templates(&database_path, 20).expect("templates should list");
         assert!(!initial[0].is_favorite);
 
-        toggle_prompt_template_favorite(&database_path, "template-1", true).expect("favorite should update");
+        toggle_prompt_template_favorite(&database_path, "template-1", true)
+            .expect("favorite should update");
         let favorites = list_prompt_templates(&database_path, 20).expect("templates should list");
 
         assert!(favorites[0].is_favorite);
@@ -713,7 +850,8 @@ mod tests {
             },
         )
         .expect("template should update");
-        let templates = search_prompt_templates(&database_path, "neon", 20).expect("templates should search");
+        let templates =
+            search_prompt_templates(&database_path, "neon", 20).expect("templates should search");
 
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].title, "Neon Product Poster");
@@ -731,7 +869,8 @@ mod tests {
         archive_prompt_template(&database_path, "template-1").expect("template should archive");
 
         let listed = list_prompt_templates(&database_path, 20).expect("templates should list");
-        let searched = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+        let searched =
+            search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
         assert!(listed.is_empty());
         assert!(searched.is_empty());
     }
@@ -745,7 +884,8 @@ mod tests {
         delete_prompt_template(&database_path, "template-1").expect("template should delete");
 
         let listed = list_prompt_templates(&database_path, 20).expect("templates should list");
-        let searched = search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
+        let searched =
+            search_prompt_templates(&database_path, "snowy", 20).expect("templates should search");
         assert!(listed.is_empty());
         assert!(searched.is_empty());
     }
@@ -760,9 +900,11 @@ mod tests {
         second.title = "Snow Portrait Copy".to_string();
         second.imported_at = "2".to_string();
         second.prompt_original = "A cinematic portrait in a snowy mountain scene.".to_string();
-        insert_prompt_templates(&database_path, &[draft(), second]).expect("templates should insert");
+        insert_prompt_templates(&database_path, &[draft(), second])
+            .expect("templates should insert");
 
-        let result = cleanup_duplicate_prompt_templates(&database_path).expect("duplicates should clean up");
+        let result =
+            cleanup_duplicate_prompt_templates(&database_path).expect("duplicates should clean up");
         let templates = list_prompt_templates(&database_path, 20).expect("templates should list");
 
         assert_eq!(result.deleted_count, 1);
@@ -882,7 +1024,10 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].user_input, "红色斗篷女孩");
         assert_eq!(history[0].image_path.as_deref(), Some("F:/image.png"));
-        assert_eq!(history[0].image_paths, vec!["F:/image.png", "F:/image-2.png"]);
+        assert_eq!(
+            history[0].image_paths,
+            vec!["F:/image.png", "F:/image-2.png"]
+        );
     }
 }
 
@@ -904,7 +1049,9 @@ pub fn delete_prompt_template(database_path: &Path, id: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub fn cleanup_duplicate_prompt_templates(database_path: &Path) -> Result<DuplicateCleanupResult, String> {
+pub fn cleanup_duplicate_prompt_templates(
+    database_path: &Path,
+) -> Result<DuplicateCleanupResult, String> {
     let mut connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let duplicate_ids = {
@@ -924,9 +1071,16 @@ pub fn cleanup_duplicate_prompt_templates(database_path: &Path) -> Result<Duplic
         let mut seen: HashMap<String, String> = HashMap::new();
         let mut duplicate_ids = Vec::new();
 
-        while let Some(row) = rows.next().map_err(|err| format!("Failed to read duplicate template row: {err}"))? {
-            let id: String = row.get(0).map_err(|err| format!("Failed to read template id: {err}"))?;
-            let prompt: String = row.get(1).map_err(|err| format!("Failed to read template prompt: {err}"))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|err| format!("Failed to read duplicate template row: {err}"))?
+        {
+            let id: String = row
+                .get(0)
+                .map_err(|err| format!("Failed to read template id: {err}"))?;
+            let prompt: String = row
+                .get(1)
+                .map_err(|err| format!("Failed to read template prompt: {err}"))?;
             let key = normalize_prompt_for_dedupe(&prompt);
             if key.is_empty() {
                 continue;
@@ -972,7 +1126,10 @@ fn normalize_prompt_for_dedupe(prompt: &str) -> String {
         .to_ascii_lowercase()
 }
 
-pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDraft) -> Result<(), String> {
+pub fn save_generation_history(
+    database_path: &Path,
+    draft: &GenerationHistoryDraft,
+) -> Result<(), String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     connection
@@ -1008,7 +1165,10 @@ pub fn save_generation_history(database_path: &Path, draft: &GenerationHistoryDr
     Ok(())
 }
 
-pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec<GenerationHistoryRecord>, String> {
+pub fn list_generation_history(
+    database_path: &Path,
+    limit: usize,
+) -> Result<Vec<GenerationHistoryRecord>, String> {
     let connection = Connection::open(database_path)
         .map_err(|err| format!("Failed to open database {}: {err}", database_path.display()))?;
     let mut statement = connection
@@ -1027,31 +1187,51 @@ pub fn list_generation_history(database_path: &Path, limit: usize) -> Result<Vec
         .map_err(|err| format!("Failed to query history: {err}"))?;
     let mut history = Vec::new();
 
-    while let Some(row) = rows.next().map_err(|err| format!("Failed to read history row: {err}"))? {
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to read history row: {err}"))?
+    {
         let matched_templates_json: String = row
             .get(5)
             .map_err(|err| format!("Failed to read matched templates JSON: {err}"))?;
-        let image_path: Option<String> = row.get(7).map_err(|err| format!("Failed to read image path: {err}"))?;
+        let image_path: Option<String> = row
+            .get(7)
+            .map_err(|err| format!("Failed to read image path: {err}"))?;
         let image_paths_json: String = row
             .get(8)
             .map_err(|err| format!("Failed to read image paths JSON: {err}"))?;
-        let mut image_paths: Vec<String> = serde_json::from_str(&image_paths_json).unwrap_or_default();
+        let mut image_paths: Vec<String> =
+            serde_json::from_str(&image_paths_json).unwrap_or_default();
         if image_paths.is_empty() {
             if let Some(path) = &image_path {
                 image_paths.push(path.clone());
             }
         }
         history.push(GenerationHistoryRecord {
-            id: row.get(0).map_err(|err| format!("Failed to read history id: {err}"))?,
-            user_input: row.get(1).map_err(|err| format!("Failed to read user input: {err}"))?,
-            prompt_zh: row.get(2).map_err(|err| format!("Failed to read zh prompt: {err}"))?,
-            prompt_en: row.get(3).map_err(|err| format!("Failed to read en prompt: {err}"))?,
-            export_format: row.get(4).map_err(|err| format!("Failed to read export format: {err}"))?,
+            id: row
+                .get(0)
+                .map_err(|err| format!("Failed to read history id: {err}"))?,
+            user_input: row
+                .get(1)
+                .map_err(|err| format!("Failed to read user input: {err}"))?,
+            prompt_zh: row
+                .get(2)
+                .map_err(|err| format!("Failed to read zh prompt: {err}"))?,
+            prompt_en: row
+                .get(3)
+                .map_err(|err| format!("Failed to read en prompt: {err}"))?,
+            export_format: row
+                .get(4)
+                .map_err(|err| format!("Failed to read export format: {err}"))?,
             matched_templates: serde_json::from_str(&matched_templates_json).unwrap_or_default(),
-            settings_json: row.get(6).map_err(|err| format!("Failed to read settings JSON: {err}"))?,
+            settings_json: row
+                .get(6)
+                .map_err(|err| format!("Failed to read settings JSON: {err}"))?,
             image_path,
             image_paths,
-            created_at: row.get(9).map_err(|err| format!("Failed to read created_at: {err}"))?,
+            created_at: row
+                .get(9)
+                .map_err(|err| format!("Failed to read created_at: {err}"))?,
         });
     }
 

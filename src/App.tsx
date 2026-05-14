@@ -3,6 +3,7 @@ import { CreatorWorkspace } from "./components/CreatorWorkspace";
 import { HistoryPanel, type HistoryLoadPayload } from "./components/HistoryPanel";
 import { ImportPanel } from "./components/ImportPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { FeedbackMessage } from "./components/FeedbackMessage";
 import { TemplateLibrary } from "./components/TemplateLibrary";
 import { initWorkspace, type WorkspaceInfo } from "./lib/workspace";
 
@@ -46,7 +47,7 @@ export default function App() {
         </nav>
       </aside>
       <section className="main-panel">
-        {error ? <div className="error-banner">{error}</div> : null}
+        {error ? <FeedbackMessage variant="error" className="error-banner">{error}</FeedbackMessage> : null}
         {workspace ? <div className="workspace-path">工作区：{workspace.dataDir}</div> : null}
         {view === "creator" ? <CreatorWorkspace historyPayload={historyPayload} /> : null}
         {view === "templates" ? <TemplateLibrary /> : null}

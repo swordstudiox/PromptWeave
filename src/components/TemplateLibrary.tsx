@@ -1,21 +1,15 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-interface PromptTemplateRecord {
-  id: string;
-  title: string;
-  category: string;
-  sourceRepo: string;
-  sourceUrl: string;
-  modelHint: string;
-  language: string;
-  promptOriginal: string;
-  negativePrompt?: string;
-  aspectRatio?: string;
-  tags: string[];
-  importedAt: string;
-  isFavorite: boolean;
-}
+import {
+  cleanupDuplicatePromptTemplates,
+  deletePromptTemplate,
+  listPromptTemplates,
+  searchPromptTemplates,
+  togglePromptTemplateFavorite,
+  updatePromptTemplate,
+} from "../lib/services/templateService";
+import type { PromptTemplateRecord } from "../types/backend";
+import { EmptyState } from "./EmptyState";
+import { FeedbackMessage } from "./FeedbackMessage";
 
 interface TemplateEditDraft {
   id: string;
@@ -25,10 +19,6 @@ interface TemplateEditDraft {
   negativePrompt: string;
   aspectRatio: string;
   tagsText: string;
-}
-
-interface DuplicateCleanupResult {
-  deletedCount: number;
 }
 
 export function TemplateLibrary() {
@@ -53,11 +43,9 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      const command = nextQuery.trim() ? "search_prompt_templates" : "list_prompt_templates";
-      const payload = nextQuery.trim()
-        ? { query: nextQuery, limit: 50 }
-        : { limit: 50 };
-      const records = await invoke<PromptTemplateRecord[]>(command, payload);
+      const records = nextQuery.trim()
+        ? await searchPromptTemplates(nextQuery, 50)
+        : await listPromptTemplates(50);
       setTemplates(records);
     } catch (err) {
       setError(String(err));
@@ -108,19 +96,17 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      await invoke("update_prompt_template", {
-        draft: {
-          id: editDraft.id,
-          title: editDraft.title.trim(),
-          category: editDraft.category.trim(),
-          promptOriginal: editDraft.promptOriginal.trim(),
-          negativePrompt: editDraft.negativePrompt.trim() || null,
-          aspectRatio: editDraft.aspectRatio.trim() || null,
-          tags: editDraft.tagsText
-            .split(/[,，]/)
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-        },
+      await updatePromptTemplate({
+        id: editDraft.id,
+        title: editDraft.title.trim(),
+        category: editDraft.category.trim(),
+        promptOriginal: editDraft.promptOriginal.trim(),
+        negativePrompt: editDraft.negativePrompt.trim() || null,
+        aspectRatio: editDraft.aspectRatio.trim() || null,
+        tags: editDraft.tagsText
+          .split(/[,，]/)
+          .map((tag) => tag.trim())
+          .filter(Boolean),
       });
       setStatus("模板已保存。");
       cancelEditing();
@@ -137,10 +123,7 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      await invoke("toggle_prompt_template_favorite", {
-        id: template.id,
-        isFavorite: !template.isFavorite,
-      });
+      await togglePromptTemplateFavorite(template.id, !template.isFavorite);
       setTemplates((current) =>
         current.map((item) =>
           item.id === template.id ? { ...item, isFavorite: !template.isFavorite } : item,
@@ -162,7 +145,7 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      await invoke("delete_prompt_template", { id: template.id });
+      await deletePromptTemplate(template.id);
       setTemplates((current) => current.filter((item) => item.id !== template.id));
       if (editingId === template.id) {
         cancelEditing();
@@ -184,7 +167,7 @@ export function TemplateLibrary() {
     setError(null);
     setStatus(null);
     try {
-      const result = await invoke<DuplicateCleanupResult>("cleanup_duplicate_prompt_templates");
+      const result = await cleanupDuplicatePromptTemplates();
       setStatus(result.deletedCount ? `已删除 ${result.deletedCount} 条重复模板。` : "没有发现重复模板。");
       await loadTemplates(query);
     } catch (err) {
@@ -197,6 +180,7 @@ export function TemplateLibrary() {
   const visibleTemplates = showFavoritesOnly
     ? templates.filter((template) => template.isFavorite)
     : templates;
+  const hasActiveSearch = Boolean(query.trim());
 
   return (
     <section className="panel">
@@ -231,10 +215,19 @@ export function TemplateLibrary() {
           {isLoading ? "搜索中..." : "搜索"}
         </button>
       </div>
-      {error ? <p className="inline-error">{error}</p> : null}
-      {status ? <p className="inline-success">{status}</p> : null}
-      {!templates.length && !isLoading ? <p>本地模板库为空。先从“导入”页面粘贴 GitHub 链接导入参考库。</p> : null}
-      {templates.length && !visibleTemplates.length && showFavoritesOnly ? <p>暂无收藏模板。</p> : null}
+      <div className="status-stack">
+        {error ? <FeedbackMessage variant="error">{error}</FeedbackMessage> : null}
+        {status ? <FeedbackMessage variant="success">{status}</FeedbackMessage> : null}
+      </div>
+      {!templates.length && !isLoading && hasActiveSearch ? (
+        <EmptyState title="没有匹配模板" description="换一个关键词，或清空搜索后查看全部本地模板。" />
+      ) : null}
+      {!templates.length && !isLoading && !hasActiveSearch ? (
+        <EmptyState title="本地模板库为空" description="先从“导入”页面粘贴 GitHub 链接导入参考库。" />
+      ) : null}
+      {templates.length && !visibleTemplates.length && showFavoritesOnly ? (
+        <EmptyState title="暂无收藏模板" description="取消“只看收藏”，或在模板卡片中收藏常用模板。" />
+      ) : null}
       <div className="template-list">
         {visibleTemplates.map((template) => {
           const isExpanded = expandedIds.includes(template.id);

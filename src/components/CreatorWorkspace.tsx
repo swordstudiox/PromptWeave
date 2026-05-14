@@ -1,26 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { formatPrompt, type ExportFormat } from "../lib/exportFormats";
 import { optimizePromptLocally } from "../lib/localOptimizer";
+import {
+  generateImagePreview,
+  optimizePromptWithApi,
+  saveGenerationHistory,
+} from "../lib/services/creatorService";
+import { searchPromptTemplateReferences } from "../lib/services/templateService";
 import { defaultCreationSettings, type CreationSettings, type PromptTemplateReference } from "../types/prompt";
+import { EmptyState } from "./EmptyState";
+import { FeedbackMessage } from "./FeedbackMessage";
 import type { HistoryLoadPayload } from "./HistoryPanel";
-
-interface PromptTemplateRecord {
-  title: string;
-  category: string;
-  promptOriginal: string;
-  negativePrompt?: string;
-  tags: string[];
-}
-
-interface ImageGenerationResult {
-  imagePath?: string;
-  imagePaths?: string[];
-}
-
-interface PromptOptimizationResult {
-  prompt: string;
-}
 
 export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLoadPayload | null }) {
   const [input, setInput] = useState("一个穿红色斗篷的女孩站在雪山上，电影感");
@@ -37,6 +28,7 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   const [isGenerating, setIsGenerating] = useState(false);
   const [operationStatus, setOperationStatus] = useState<string | null>(null);
   const apiRequestId = useRef(0);
+  const templateSearchRequestId = useRef(0);
   const result = useMemo(() => optimizePromptLocally(input, templates), [input, templates]);
   const activeResult = useMemo(
     () => (apiPrompt ? { ...result, en: apiPrompt } : result),
@@ -56,20 +48,27 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
   }, [historyPayload]);
 
   useEffect(() => {
-    const timer = window.setTimeout(async () => {
-      if (!input.trim()) {
-        setTemplates([]);
-        return;
-      }
+    const requestId = templateSearchRequestId.current + 1;
+    templateSearchRequestId.current = requestId;
 
+    if (!input.trim()) {
+      setTemplates([]);
+      setTemplateError(null);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
       try {
-        const records = await invoke<PromptTemplateRecord[]>("search_prompt_templates", {
-          query: input,
-          limit: 3,
-        });
+        const records = await searchPromptTemplateReferences(input, 3);
+        if (requestId !== templateSearchRequestId.current) {
+          return;
+        }
         setTemplates(records);
         setTemplateError(null);
       } catch (err) {
+        if (requestId !== templateSearchRequestId.current) {
+          return;
+        }
         setTemplates([]);
         setTemplateError(String(err));
       }
@@ -101,13 +100,10 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
     setGenerationError(null);
     setOperationStatus("正在调用图片生成 API，界面可继续操作。");
     try {
-      const generated = await invoke<ImageGenerationResult>("generate_image_preview", {
-        prompt: exported,
-        options: {
-          size: settings.imageSize,
-          quality: settings.imageQuality,
-          n: settings.imageCount,
-        },
+      const generated = await generateImagePreview(exported, {
+        size: settings.imageSize,
+        quality: settings.imageQuality,
+        n: settings.imageCount,
       });
       const nextImagePaths = generated.imagePaths?.length
         ? generated.imagePaths
@@ -139,9 +135,7 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
     setApiError(null);
     setOperationStatus("正在调用提示词优化 API，界面可继续操作。");
     try {
-      const optimized = await invoke<PromptOptimizationResult>("optimize_prompt_with_api", {
-        localPrompt: result.en,
-      });
+      const optimized = await optimizePromptWithApi(result.en);
       if (requestId !== apiRequestId.current) {
         setOperationStatus("输入已更新，已忽略上一轮 API 优化结果。");
         return;
@@ -165,19 +159,17 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
 
   async function saveHistory(nextImagePaths: string[] = imagePaths, promptOverride?: string) {
     const now = Date.now().toString();
-    await invoke("save_generation_history", {
-      draft: {
-        id: `history-${now}-${Math.random().toString(16).slice(2)}`,
-        userInput: input,
-        promptZh: result.zh,
-        promptEn: promptOverride || exported,
-        exportFormat: format,
-        matchedTemplatesJson: JSON.stringify(result.matchedTemplateTitles),
-        settingsJson: JSON.stringify(settings),
-        imagePath: nextImagePaths[0],
-        imagePathsJson: JSON.stringify(nextImagePaths),
-        createdAt: now,
-      },
+    await saveGenerationHistory({
+      id: `history-${now}-${Math.random().toString(16).slice(2)}`,
+      userInput: input,
+      promptZh: result.zh,
+      promptEn: promptOverride || exported,
+      exportFormat: format,
+      matchedTemplatesJson: JSON.stringify(result.matchedTemplateTitles),
+      settingsJson: JSON.stringify(settings),
+      imagePath: nextImagePaths[0],
+      imagePathsJson: JSON.stringify(nextImagePaths),
+      createdAt: now,
     });
   }
 
@@ -293,16 +285,22 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
 
       <div className="panel">
         <h2>优化结果</h2>
-        <h3>中文提示词</h3>
-        <p>{result.zh}</p>
-        <h3>英文提示词</h3>
-        <p>{result.en}</p>
-        {apiPrompt ? (
-          <>
-            <h3>API 优化版</h3>
-            <p>{apiPrompt}</p>
-          </>
-        ) : null}
+        <div className="result-stack">
+          <article className="result-block result-block--primary">
+            <h3>中文提示词</h3>
+            <p>{result.zh}</p>
+          </article>
+          <article className="result-block">
+            <h3>英文提示词</h3>
+            <p>{result.en}</p>
+          </article>
+          {apiPrompt ? (
+            <article className="result-block result-block--api">
+              <h3>API 优化版</h3>
+              <p>{apiPrompt}</p>
+            </article>
+          ) : null}
+        </div>
         <h3>结构化字段</h3>
         <dl className="field-list">
           {Object.entries(result.structured).map(([key, value]) => (
@@ -322,8 +320,10 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
             </ul>
           </>
         ) : null}
-        {templateError ? <p className="inline-error">{templateError}</p> : null}
-        {apiError ? <p className="inline-error">{apiError}</p> : null}
+        <div className="status-stack">
+          {templateError ? <FeedbackMessage variant="warning">{templateError}</FeedbackMessage> : null}
+          {apiError ? <FeedbackMessage variant="error">{apiError}</FeedbackMessage> : null}
+        </div>
       </div>
 
       <div className="panel">
@@ -336,13 +336,11 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
         <button disabled={isGenerating || !exported.trim()} onClick={generateImage}>
           {isGenerating ? "生成中..." : "生成图片"}
         </button>
-        {operationStatus ? (
-          <p className="inline-status" role="status" aria-live="polite">
-            {operationStatus}
-          </p>
-        ) : null}
-        {copyStatus ? <p className="inline-success">{copyStatus}</p> : null}
-        {generationError ? <p className="inline-error">{generationError}</p> : null}
+        <div className="status-stack">
+          {operationStatus ? <FeedbackMessage variant="status">{operationStatus}</FeedbackMessage> : null}
+          {copyStatus ? <FeedbackMessage variant="success">{copyStatus}</FeedbackMessage> : null}
+          {generationError ? <FeedbackMessage variant="error">{generationError}</FeedbackMessage> : null}
+        </div>
         {imagePaths.length ? (
           <div className="image-preview">
             {imagePaths.map((imagePath) => (
@@ -352,7 +350,9 @@ export function CreatorWorkspace({ historyPayload }: { historyPayload: HistoryLo
               </figure>
             ))}
           </div>
-        ) : null}
+        ) : (
+          <EmptyState title="暂无图片预览" description="生成图片后会在这里展示预览和本地文件路径。" />
+        )}
       </div>
     </section>
   );

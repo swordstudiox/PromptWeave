@@ -1,18 +1,7 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-interface ApiProviderConfig {
-  enabled: boolean;
-  provider: string;
-  baseUrl: string;
-  model: string;
-  apiKey: string;
-}
-
-interface AppConfig {
-  promptOptimization: ApiProviderConfig;
-  imageGeneration: ApiProviderConfig;
-}
+import { getAppConfig, saveAppConfig } from "../lib/services/configService";
+import type { ApiProviderConfig, AppConfig } from "../types/backend";
+import { FeedbackMessage } from "./FeedbackMessage";
 
 const defaultConfig: AppConfig = {
   promptOptimization: {
@@ -38,7 +27,7 @@ export function SettingsPanel() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    invoke<AppConfig>("get_app_config")
+    getAppConfig()
       .then(setConfig)
       .catch((err) => setError(String(err)));
   }, []);
@@ -58,7 +47,7 @@ export function SettingsPanel() {
     setError(null);
     setStatus(null);
     try {
-      const saved = await invoke<AppConfig>("save_app_config", { config });
+      const saved = await saveAppConfig(config);
       setConfig(saved);
       setStatus("配置已保存到当前工作区。");
     } catch (err) {
@@ -97,8 +86,8 @@ export function SettingsPanel() {
         <button disabled={isSaving} onClick={save}>
           {isSaving ? "保存中..." : "保存配置"}
         </button>
-        {status ? <span className="inline-success">{status}</span> : null}
-        {error ? <span className="inline-error">{error}</span> : null}
+        {status ? <FeedbackMessage variant="success">{status}</FeedbackMessage> : null}
+        {error ? <FeedbackMessage variant="error">{error}</FeedbackMessage> : null}
       </div>
     </>
   );
